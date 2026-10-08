@@ -27,19 +27,21 @@ UI에는 게임 선택 목록, 상태/후보 표시, 시작·중단을 겸하는
 4. 후보 스레드의 기존 프로세서 그룹 안에서 현재 허용된 논리 프로세서 중 앞의 2개를 affinity로 지정하고 우선순위를 `AboveNormal`로 올린다.
 5. 다시 버튼을 누르거나 창을 닫으면 관찰을 중단하고 원래 affinity/priority 복구를 시도한다. 복구를 확인하지 못하면 새 변경을 막고 복구 재시도 버튼을 남긴다. 정상 복구가 끝날 때까지 창 종료도 보류한다.
 
-## 클래스 구성
+## 언어와 클래스 구성
 
-- `App`: WPF 진입점과 공용 UI 리소스.
-- `MainWindow`: 게임 선택, 단일 버튼, 진행 상태 표시, 취소·종료 연결.
-- `GameTarget`: 프로세스 PID와 생성 시각을 식별한다. 경로를 읽을 수 있으면 실행 경로도 확인한다. 경로 접근이 막혀도 프로세스 이름으로 목록에 표시한다.
-- `ThreadCandidateTracker`: Windows 스레드 스냅샷과 `GetThreadTimes` 표본으로 CPU 후보를 추적한다. 일부 스레드 신원을 확인하지 못하면 표본과 후보를 초기화한다.
-- `GameSession`: 관찰, 후보 교체, 적용, 중단 및 최종 복구 흐름을 조정한다.
-- `ThreadPolicyController`: 적용 전에 원래 설정을 저장하고, 적용 후 읽기 검증을 한다. 복구 시 대상 신원과 현재 설정을 확인하고, 복구가 확인되지 않으면 상태를 유지해 후속 변경을 차단한다.
-- `NativeMethods`: Toolhelp, 스레드 신원, 그룹 affinity, 우선순위와 핸들 대기에 필요한 Windows API 선언.
+- 프론트엔드: C# WPF. 게임 목록과 단일 버튼, 상태·후보 표시 및 창 닫기 흐름을 맡는다.
+- 백엔드: `native/GameOptimizer.Engine.vcxproj`로 빌드하는 x64 C++ DLL. 스레드 관찰, 후보 확정, affinity/priority 적용, 복구와 상태 보존을 맡는다.
+- `App`: WPF 시작점과 공용 UI 리소스.
+- `MainWindow`: 게임 선택 UI와 `NativeEngineSession` 호출, 상태 표시, 중단·복구 재시도·닫기 보류.
+- `GameTarget`: UI 목록 표시용 프로세스 정보(PID, 생성 FILETIME, 선택 가능한 경로). 실행 중 신원 재검증은 C++ 엔진이 한다.
+- `NativeEngineSession`: C# P/Invoke 얇은 래퍼. C++ 세션 핸들, 상태 조회, 중단, 완료 대기, 복구 재시도, 파기를 전달한다. 후보 추적이나 CPU 정책 로직을 두지 않는다.
+- `native/EngineApi.h`: C ABI와 고정 크기 상태 구조체. WPF와 C++ 엔진 사이의 경계다.
+- `native/EngineApi.cpp`: 내부 `GO_SESSION_IMPL`, `ThreadCandidateTracker`, `ThreadPolicyController`, 안전한 HANDLE 소유 및 내보낸 `go_*` 함수.
+- `GameOptimizer.V2.sln`: C++ DLL과 WPF 앱을 함께 빌드하며 DLL을 먼저 만든다.
 
 ## 안전 경계와 한계
 
-- 프로세스는 PID와 생성 시각으로, 스레드는 TID와 생성 시각으로 구분한다. 경로 확인이 가능한 프로세스는 경로도 비교한다.
+- 프로세스는 PID와 생성 FILETIME으로, 스레드는 TID와 생성 FILETIME으로 구분한다. 경로 확인이 가능한 프로세스는 C++ 엔진에서 경로도 비교한다.
 - 원래 affinity/priority, 실제 적용값, 읽기 검증, 복구 확인은 별도 상태로 관리한다. V2 적용 후 외부 프로그램이 다른 값을 설정하면 덮어쓰지 않고 복구 미확인으로 남긴다.
 - 높은 권한으로 실행된 게임에는 V2도 관리자 권한이 필요할 수 있다. 자동으로 권한을 올리지는 않는다. 접근 거부나 후보 관찰 실패 시 관리자 권한으로 다시 실행해 확인한다.
 - 강제 종료, 전원 차단, 시스템 충돌 뒤에 복구를 보장하는 영구 저널은 없다. 보장 범위는 앱이 실행 중인 동안의 중단·정상 종료 복구다.
@@ -48,13 +50,13 @@ UI에는 게임 선택 목록, 상태/후보 표시, 시작·중단을 겸하는
 
 ## 빌드와 확인 상태
 
-프로젝트 폴더에서 다음을 실행한다.
+Visual Studio의 Developer PowerShell에서 C++ 데스크톱과 .NET 데스크톱 도구가 설치된 상태로 다음을 실행한다.
 
 ```powershell
-dotnet build .\GameOptimizer.V2.csproj -c Release
+msbuild .\GameOptimizer.V2.sln -m -p:Configuration=Release -p:Platform="Any CPU"
 ```
 
-현재 소스는 Release 빌드에서 경고 0개, 오류 0개를 확인했다. 테스트는 추가하거나 실행하지 않았다. 실제 게임에 대한 affinity/priority 적용, 권한 거부 흐름, 수동 UI 조작, 강제 종료 뒤 동작은 미검증이다.
+현재 구조는 C++ DLL을 P/Invoke로 호출한다. 위 Release 솔루션 빌드는 경고 0개, 오류 0개로 확인했다. 테스트는 추가하거나 실행하지 않았다. 실제 게임 affinity/priority 적용, 권한 거부 흐름, 수동 UI 조작, 강제 종료 뒤 동작은 미검증이다.
 
 최근 문제 대응으로 경로를 읽지 못해 목록에서 빠지던 `Client.exe` 같은 창 프로세스는 OS 프로세스 이름으로 표시하도록 했다. 목록 표시 코드는 빌드했지만 실제 화면에서 해당 항목이 보이는지는 수동 확인하지 않았다.
 

@@ -1,0 +1,27 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 18
+VisualStudioVersion = 18.0.0.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{BC8A1FFA-BEE3-4634-8014-F334798102B3}") = "GameOptimizer.Engine", "native\GameOptimizer.Engine.vcxproj", "{3D623E1E-AF10-4EF2-BD0D-82E1CB65201A}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "GameOptimizer.V2", "GameOptimizer.V2.csproj", "{2BA5AF52-090A-43BF-8350-567A72790975}"
+	ProjectSection(ProjectDependencies) = postProject
+		{3D623E1E-AF10-4EF2-BD0D-82E1CB65201A} = {3D623E1E-AF10-4EF2-BD0D-82E1CB65201A}
+	EndProjectSection
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{3D623E1E-AF10-4EF2-BD0D-82E1CB65201A}.Debug|Any CPU.ActiveCfg = Debug|x64
+		{3D623E1E-AF10-4EF2-BD0D-82E1CB65201A}.Debug|Any CPU.Build.0 = Debug|x64
+		{3D623E1E-AF10-4EF2-BD0D-82E1CB65201A}.Release|Any CPU.ActiveCfg = Release|x64
+		{3D623E1E-AF10-4EF2-BD0D-82E1CB65201A}.Release|Any CPU.Build.0 = Release|x64
+		{2BA5AF52-090A-43BF-8350-567A72790975}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2BA5AF52-090A-43BF-8350-567A72790975}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2BA5AF52-090A-43BF-8350-567A72790975}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2BA5AF52-090A-43BF-8350-567A72790975}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

@@ -5,8 +5,7 @@ namespace GameOptimizer.V2;
 
 public partial class MainWindow : Window
 {
-    private GameSession? session;
-    private CancellationTokenSource? cancellation;
+    private NativeEngineSession? session;
     private Task<SessionResult>? runTask;
     private bool closeWhenStopped;
     private bool allowClose;
@@ -27,7 +26,8 @@ public partial class MainWindow : Window
             var games = await Task.Run(GameTarget.FindVisibleGames);
             GameBox.ItemsSource = games;
             GameBox.SelectedItem = games.FirstOrDefault(game => selected is { } previous &&
-                game.ProcessId == previous.ProcessId && game.StartTimeUtcTicks == previous.StartTimeUtcTicks)
+                game.ProcessId == previous.ProcessId &&
+                game.ProcessCreationFileTime == previous.ProcessCreationFileTime)
                 ?? games.FirstOrDefault();
             StatusText.Text = games.Count == 0 ? "선택할 수 있는 게임 창이 없습니다." : "게임을 선택하세요.";
         }
@@ -44,7 +44,7 @@ public partial class MainWindow : Window
         if (busy)
         {
             StatusText.Text = "중단 및 복구 중입니다…";
-            cancellation?.Cancel();
+            session?.RequestStop();
             RunButton.IsEnabled = false;
             return;
         }
@@ -53,12 +53,13 @@ public partial class MainWindow : Window
         {
             busy = true;
             SetControlsEnabled(false);
-            StatusText.Text = "복구를 다시 확인합니다…";
-            bool restored = await Task.Run(session.TryRestore);
+            StatusText.Text = "C++ 엔진에서 복구를 다시 확인합니다…";
+            var recoverySession = session;
+            bool restored = await Task.Run(recoverySession.TryRestore);
             busy = false;
             if (restored)
             {
-                session.Dispose();
+                recoverySession.Dispose();
                 session = null;
                 StatusText.Text = "원래 설정으로 복구했습니다.";
                 if (closeWhenStopped) CloseAfterRecovery();
@@ -73,22 +74,36 @@ public partial class MainWindow : Window
         }
 
         if (GameBox.SelectedItem is not GameTarget target) return;
-        session = new GameSession();
-        cancellation = new CancellationTokenSource();
-        busy = true;
+
+        NativeEngineSession? activeSession;
+        NativeEngineStatus startupStatus;
+        try
+        {
+            activeSession = NativeEngineSession.Start(target, out startupStatus);
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = "C++ 엔진을 불러오지 못했습니다: " + ex.Message;
+            return;
+        }
+
+        if (activeSession is null)
+        {
+            StatusText.Text = startupStatus.Message ?? "C++ 엔진을 시작하지 못했습니다.";
+            return;
+        }
+
+        session = activeSession;
         closeWhenStopped = false;
+        busy = true;
         SetControlsEnabled(false);
         RunButton.IsEnabled = true;
         RunButton.Content = "중단 및 복구";
-        StatusText.Text = "대상 확인 중…";
+        StatusText.Text = startupStatus.Message ?? "C++ 엔진 시작 중…";
         CandidateText.Text = "후보를 관찰하는 중…";
 
         var progress = new Progress<SessionStatus>(UpdateStatus);
-        var activeSession = session;
-        var token = cancellation.Token;
-        runTask = Task.Run(() => activeSession.RunAsync(
-            target, CpuPlacement.TwoLogicalProcessors, raisePriority: true,
-            progress: progress, cancellationToken: token));
+        runTask = activeSession.WaitForCompletionAsync(progress);
 
         SessionResult result;
         try
@@ -97,19 +112,19 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            result = new(false, false, "실행 오류: " + ex.Message, null);
+            activeSession.RequestStop();
+            result = new(false, true, "C++ 엔진 상태를 확인하지 못했습니다. 복구 확인이 필요합니다: " + ex.Message,
+                false, 0, 0);
         }
         finally
         {
             busy = false;
-            cancellation?.Dispose();
-            cancellation = null;
             runTask = null;
         }
 
         StatusText.Text = result.Message;
-        CandidateText.Text = result.Candidate is { } candidate
-            ? $"PID {candidate.ProcessId} · TID {candidate.ThreadId} · CPU 후보"
+        CandidateText.Text = result.HasCandidate
+            ? $"PID {result.ProcessId} · TID {result.ThreadId} · CPU 후보"
             : "없음";
 
         if (result.RecoveryRequired || activeSession.HasPendingRecovery)
@@ -131,8 +146,8 @@ public partial class MainWindow : Window
     private void UpdateStatus(SessionStatus status)
     {
         StatusText.Text = status.Message;
-        CandidateText.Text = status.Candidate is { } candidate
-            ? $"PID {candidate.ProcessId} · TID {candidate.ThreadId} · " +
+        CandidateText.Text = status.HasCandidate
+            ? $"PID {status.ProcessId} · TID {status.ThreadId} · " +
               (status.Confirmed ? "안정 후보" : "안정성 확인 중")
             : "확인 가능한 후보 없음";
     }
@@ -150,9 +165,9 @@ public partial class MainWindow : Window
         {
             e.Cancel = true;
             closeWhenStopped = true;
-            cancellation?.Cancel();
+            session?.RequestStop();
             RunButton.IsEnabled = false;
-            StatusText.Text = "종료 및 복구가 끝날 때까지 기다립니다…";
+            StatusText.Text = "종료 및 C++ 엔진 복구가 끝날 때까지 기다립니다…";
             return;
         }
 

@@ -8,7 +8,7 @@ internal sealed record GameTarget(
     string Executable,
     string? FullPath,
     string Label,
-    long StartTimeUtcTicks)
+    long ProcessCreationFileTime)
 {
     internal static List<GameTarget> FindVisibleGames()
     {
@@ -23,7 +23,7 @@ internal sealed record GameTarget(
                         string.IsNullOrWhiteSpace(process.MainWindowTitle))
                         continue;
 
-                    long start = process.StartTime.ToUniversalTime().Ticks;
+                    long creation = process.StartTime.ToUniversalTime().ToFileTimeUtc();
                     string executable = process.ProcessName + ".exe";
                     string? path = null;
                     try
@@ -43,7 +43,7 @@ internal sealed record GameTarget(
 
                     string pathNote = path is null ? " · 경로 미확인" : string.Empty;
                     result.Add(new(process.Id, executable, path,
-                        $"{process.MainWindowTitle} · {executable} ({process.Id}){pathNote}", start));
+                        $"{process.MainWindowTitle} · {executable} ({process.Id}){pathNote}", creation));
                 }
                 catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or
                                            NotSupportedException or UnauthorizedAccessException or IOException)
@@ -56,34 +56,4 @@ internal sealed record GameTarget(
         return result.OrderBy(game => game.Label, StringComparer.CurrentCultureIgnoreCase).ToList();
     }
 
-    internal Process OpenAndValidate()
-    {
-        var process = Process.GetProcessById(ProcessId);
-        try
-        {
-            Validate(process);
-            _ = process.Handle; // Keep the selected process object alive for the session.
-            return process;
-        }
-        catch
-        {
-            process.Dispose();
-            throw;
-        }
-    }
-
-    internal void Validate(Process process)
-    {
-        if (process.HasExited || process.Id != ProcessId ||
-            process.StartTime.ToUniversalTime().Ticks != StartTimeUtcTicks)
-            throw new InvalidOperationException("선택한 게임 프로세스가 종료되었거나 교체되었습니다.");
-
-        if (FullPath is not null)
-        {
-            string currentPath = Path.GetFullPath(process.MainModule?.FileName
-                ?? throw new InvalidOperationException("게임 경로를 다시 확인할 수 없습니다."));
-            if (!string.Equals(currentPath, FullPath, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("선택한 PID의 실행 파일이 변경되었습니다.");
-        }
-    }
 }
