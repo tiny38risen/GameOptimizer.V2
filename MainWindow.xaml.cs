@@ -6,74 +6,155 @@ namespace GameOptimizer.V2;
 public partial class MainWindow : Window
 {
     private NativeEngineSession? session;
-    private Task<SessionResult>? runTask;
     private bool closeWhenStopped;
     private bool allowClose;
     private bool busy;
+    private bool stopRequested;
 
-    public MainWindow()
+    public MainWindow() // UI 초기화·창 목록 조회·대기 버튼 설정
     {
         InitializeComponent();
+        SetButtonState(ButtonState.Idle);
         Loaded += async (_, _) => await RefreshGamesAsync();
     }
 
-    private async Task RefreshGamesAsync()
+    private async Task<bool> RefreshGamesAsync(bool duringStart = false) // 보이는 창 탐색·대상 목록 갱신
     {
-        if (busy) return;
+        if (busy && !duringStart) return false;
         var selected = GameBox.SelectedItem as GameTarget;
         try
         {
-            var games = await Task.Run(GameTarget.FindVisibleGames);
-            GameBox.ItemsSource = games;
-            GameBox.SelectedItem = games.FirstOrDefault(game => selected is { } previous &&
-                game.ProcessId == previous.ProcessId &&
-                game.ProcessCreationFileTime == previous.ProcessCreationFileTime)
-                ?? games.FirstOrDefault();
-            StatusText.Text = games.Count == 0 ? "선택할 수 있는 게임 창이 없습니다." : "게임을 선택하세요.";
+            var targets = await Task.Run(NativeEngineApi.FindVisibleGames);
+
+            GameBox.ItemsSource = targets;
+            GameBox.SelectedItem = targets.FirstOrDefault(target => selected is { } previous &&
+                target.ProcessId == previous.ProcessId &&
+                target.ProcessCreationFileTime == previous.ProcessCreationFileTime)
+                ?? (targets.Count == 1 ? targets[0] : null);
+
+            if (targets.Count == 0)
+            {
+                ShowStatus("보이는 창 없음");
+                SetButtonState(ButtonState.Idle);
+            }
+            else if (targets.Count > 1 && GameBox.SelectedItem is null)
+            {
+                ShowStatus("대상 창 선택");
+                SetButtonState(ButtonState.Idle);
+            }
+            else
+            {
+                ShowStatus("대기 중");
+                SetButtonState(ButtonState.Idle);
+            }
+
+            return true;
         }
         catch (Exception ex)
         {
-            StatusText.Text = "게임 목록을 읽지 못했습니다: " + ex.Message;
+            ShowStatus("목록 확인 오류", ex.Message);
+            SetButtonState(ButtonState.Error);
+            return false;
         }
     }
 
-    private async void GameBox_DropDownOpened(object? sender, EventArgs e) => await RefreshGamesAsync();
+    private async void GameBox_DropDownOpened(object? sender, EventArgs e) // 창 목록 펼칠 때 대상 재검색
+        => await RefreshGamesAsync();
 
-    private async void Run_Click(object sender, RoutedEventArgs e)
+    private async void Run_Click(object sender, RoutedEventArgs e) // 단일 버튼으로 최적화 시작·중단·복구
     {
         if (busy)
         {
-            StatusText.Text = "중단 및 복구 중입니다…";
+            if (stopRequested) return;
+            stopRequested = true;
+            SetButtonState(ButtonState.Recovering);
+            ShowStatus("중단 및 복구 중");
             session?.RequestStop();
             RunButton.IsEnabled = false;
+            return;
+        }
+
+        if (RunButton.Tag as string == ButtonState.Error.ToString() &&
+            session?.HasPendingRecovery != true)
+        {
+            SetButtonState(ButtonState.Idle);
+            ShowStatus("대기 중");
+            SetControlsEnabled(true);
             return;
         }
 
         if (session?.HasPendingRecovery == true)
         {
             busy = true;
+            stopRequested = true;
             SetControlsEnabled(false);
-            StatusText.Text = "C++ 엔진에서 복구를 다시 확인합니다…";
+            SetButtonState(ButtonState.Recovering);
+            ShowStatus("원래 설정 복구 중");
             var recoverySession = session;
-            bool restored = await Task.Run(recoverySession.TryRestore);
+            bool restored;
+            string? restoreError = null;
+            try
+            {
+                restored = await Task.Run(recoverySession.TryRestore);
+            }
+            catch (Exception ex)
+            {
+                restored = false;
+                restoreError = ex.Message;
+            }
+
             busy = false;
+            stopRequested = false;
             if (restored)
             {
                 recoverySession.Dispose();
                 session = null;
-                StatusText.Text = "원래 설정으로 복구했습니다.";
+                ShowStatus("복구 완료");
+                SetButtonState(ButtonState.Idle);
+                SetControlsEnabled(true);
                 if (closeWhenStopped) CloseAfterRecovery();
             }
             else
             {
-                StatusText.Text = "복구를 확인하지 못했습니다. 새 적용은 차단되어 있습니다. 다시 눌러 복구를 재시도하세요.";
-                RunButton.Content = "복구 재시도";
+                ShowStatus("복구 확인 필요", restoreError is null
+                    ? "복구 검증에 실패했습니다. 다시 눌러 재시도하세요."
+                    : "복구 처리 중 오류가 발생했습니다: " + restoreError);
+                SetButtonState(ButtonState.Error, recoveryRequired: true);
                 SetControlsEnabled(true, recoveryOnly: true);
             }
             return;
         }
 
-        if (GameBox.SelectedItem is not GameTarget target) return;
+        busy = true;
+        SetControlsEnabled(false);
+        SetButtonState(ButtonState.Running);
+        ShowStatus("대상 창 확인 중");
+
+        if (!await RefreshGamesAsync(duringStart: true))
+        {
+            busy = false;
+            if (closeWhenStopped)
+            {
+                CloseAfterRecovery();
+                return;
+            }
+            SetControlsEnabled(true);
+            return;
+        }
+        if (closeWhenStopped)
+        {
+            busy = false;
+            CloseAfterRecovery();
+            return;
+        }
+        if (GameBox.SelectedItem is not GameTarget target)
+        {
+            ShowStatus(GameBox.Items.Count == 0 ? "보이는 창 없음" : "대상 창 선택");
+            SetButtonState(ButtonState.Idle);
+            busy = false;
+            SetControlsEnabled(true);
+            return;
+        }
 
         NativeEngineSession? activeSession;
         NativeEngineStatus startupStatus;
@@ -83,27 +164,33 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            StatusText.Text = "C++ 엔진을 불러오지 못했습니다: " + ex.Message;
+            busy = false;
+            SetControlsEnabled(true);
+            ShowStatus("최적화 시작 오류", ex.Message);
+            SetButtonState(ButtonState.Error);
             return;
         }
 
         if (activeSession is null)
         {
-            StatusText.Text = startupStatus.Message ?? "C++ 엔진을 시작하지 못했습니다.";
+            busy = false;
+            SetControlsEnabled(true);
+            ShowStatus("최적화 시작 오류", startupStatus.Message);
+            SetButtonState(ButtonState.Error);
             return;
         }
 
         session = activeSession;
         closeWhenStopped = false;
-        busy = true;
+        stopRequested = false;
         SetControlsEnabled(false);
         RunButton.IsEnabled = true;
-        RunButton.Content = "중단 및 복구";
-        StatusText.Text = startupStatus.Message ?? "C++ 엔진 시작 중…";
-        CandidateText.Text = "후보를 관찰하는 중…";
+        SetButtonState(ButtonState.Running);
+        ShowStatus("CPU 스레드 탐색 중");
+        CandidateText.Text = "탐색 중";
 
         var progress = new Progress<SessionStatus>(UpdateStatus);
-        runTask = activeSession.WaitForCompletionAsync(progress);
+        var runTask = activeSession.WaitForCompletionAsync(progress);
 
         SessionResult result;
         try
@@ -113,61 +200,124 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             activeSession.RequestStop();
-            result = new(false, true, "C++ 엔진 상태를 확인하지 못했습니다. 복구 확인이 필요합니다: " + ex.Message,
+            result = new(false, true, "엔진 상태를 확인하지 못했습니다. 복구 확인이 필요합니다: " + ex.Message,
                 false, 0, 0);
         }
         finally
         {
             busy = false;
-            runTask = null;
+            stopRequested = false;
         }
 
-        StatusText.Text = result.Message;
         CandidateText.Text = result.HasCandidate
-            ? $"PID {result.ProcessId} · TID {result.ThreadId} · CPU 후보"
+            ? $"PID {result.ProcessId} · TID {result.ThreadId}"
             : "없음";
 
         if (result.RecoveryRequired || activeSession.HasPendingRecovery)
         {
             session = activeSession;
-            RunButton.Content = "복구 재시도";
+            ShowStatus("복구 확인 필요", result.Message);
+            SetButtonState(ButtonState.Error, recoveryRequired: true);
             SetControlsEnabled(true, recoveryOnly: true);
-            if (closeWhenStopped) StatusText.Text += " 창을 닫기 전에 복구를 확인해야 합니다.";
+            if (closeWhenStopped) ShowStatus("복구 확인 필요", result.Message + " 창을 닫기 전에 복구를 확인해야 합니다.");
             return;
         }
 
         activeSession.Dispose();
         session = null;
-        RunButton.Content = "추적 시작";
         SetControlsEnabled(true);
+        if (result.Passed)
+        {
+            ShowStatus("복구 완료");
+            SetButtonState(ButtonState.Idle);
+        }
+        else
+        {
+            ShowStatus("적용 오류 · 원복 완료", result.Message);
+            SetButtonState(ButtonState.Error);
+        }
         if (closeWhenStopped) CloseAfterRecovery();
     }
 
-    private void UpdateStatus(SessionStatus status)
+    private void UpdateStatus(SessionStatus status) // 네이티브 후보·상태 표시 갱신
     {
-        StatusText.Text = status.Message;
-        CandidateText.Text = status.HasCandidate
-            ? $"PID {status.ProcessId} · TID {status.ThreadId} · " +
-              (status.Confirmed ? "안정 후보" : "안정성 확인 중")
-            : "확인 가능한 후보 없음";
+        if (!busy || stopRequested) return;
+
+        if (status.HasCandidate)
+        {
+            CandidateText.Text = $"PID {status.ProcessId} · TID {status.ThreadId}" +
+                (status.Confirmed ? string.Empty : " · 확인 중");
+        }
+        else
+        {
+            CandidateText.Text = "탐색 중";
+        }
+
+        var hasRestrictedProcesses = status.Message.Contains(
+            "제한으로 건너뛴 프로세스", StringComparison.Ordinal);
+
+        if (status.Confirmed)
+        {
+            SetButtonState(ButtonState.Applied);
+            ShowStatus("CPU 설정 적용 확인", "설정 적용은 확인했지만, 게임 성능 변화는 측정하지 않았습니다.");
+        }
+        else
+        {
+            SetButtonState(ButtonState.Running);
+            ShowStatus(status.Applied ? "CPU 범위 적용 · 후보 탐색 중" : "CPU 후보 분석 중",
+                hasRestrictedProcesses ? null : status.Message);
+        }
     }
 
-    private void SetControlsEnabled(bool enabled, bool recoveryOnly = false)
+    private void SetButtonState(ButtonState state, bool recoveryRequired = false) // 단계별 버튼 문구·안내 설정
+    {
+        RunButton.Tag = state.ToString();
+        RunButton.ToolTip = state switch
+        {
+            ButtonState.Idle => "CPU 최적화를 시작합니다.",
+            ButtonState.Running => "누르면 실행을 중단하고 원래 설정을 복구합니다.",
+            ButtonState.Applied => "누르면 실행을 종료하고 원래 설정을 복구합니다.",
+            ButtonState.Error when recoveryRequired => "원래 설정 복구를 다시 확인합니다.",
+            ButtonState.Error => "오류 상태를 닫고 시작 상태로 돌아갑니다.",
+            ButtonState.Recovering => "중단 및 복구를 처리하고 있습니다.",
+            _ => null
+        };
+
+        RunButton.Content = state switch
+        {
+            ButtonState.Idle => "시작",
+            ButtonState.Running => "중단",
+            ButtonState.Applied => "종료",
+            ButtonState.Error => "중단",
+            ButtonState.Recovering => "중단",
+            _ => string.Empty
+        };
+    }
+
+    private void ShowStatus(string text, string? detail = null) // 상태·상세 안내 표시
+    {
+        StatusText.Text = text;
+        StatusText.ToolTip = detail;
+    }
+
+    private void SetControlsEnabled(bool enabled, bool recoveryOnly = false) // 진행·복구 상태별 입력 제어
     {
         GameBox.IsEnabled = enabled && !recoveryOnly;
         RunButton.IsEnabled = enabled;
     }
 
-    private void Window_Closing(object? sender, CancelEventArgs e)
+    private void Window_Closing(object? sender, CancelEventArgs e) // 세션 종료·원복 전 창 닫기 보류
     {
         if (allowClose) return;
         if (busy)
         {
             e.Cancel = true;
             closeWhenStopped = true;
+            stopRequested = true;
             session?.RequestStop();
+            SetButtonState(ButtonState.Recovering);
             RunButton.IsEnabled = false;
-            StatusText.Text = "종료 및 C++ 엔진 복구가 끝날 때까지 기다립니다…";
+            ShowStatus("중단 및 복구 중");
             return;
         }
 
@@ -175,8 +325,8 @@ public partial class MainWindow : Window
         {
             e.Cancel = true;
             closeWhenStopped = true;
-            StatusText.Text = "복구 미확인 상태라 창을 닫을 수 없습니다. 복구를 재시도하세요.";
-            RunButton.Content = "복구 재시도";
+            ShowStatus("복구 확인 필요");
+            SetButtonState(ButtonState.Error, recoveryRequired: true);
             SetControlsEnabled(true, recoveryOnly: true);
             return;
         }
@@ -185,9 +335,18 @@ public partial class MainWindow : Window
         allowClose = true;
     }
 
-    private void CloseAfterRecovery()
+    private void CloseAfterRecovery() // 복구 완료 후 창 종료 허용
     {
         allowClose = true;
         Close();
+    }
+
+    private enum ButtonState
+    {
+        Idle,
+        Running,
+        Applied,
+        Error,
+        Recovering
     }
 }
