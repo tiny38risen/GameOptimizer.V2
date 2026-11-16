@@ -19,6 +19,7 @@
     <Resource Include="assets\GameOptimizer.ico" />
     <Content Include="bin\$(Configuration)\$(TargetFramework)\GameOptimizer.Engine.dll">
       <Link>GameOptimizer.Engine.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
   </ItemGroup>
