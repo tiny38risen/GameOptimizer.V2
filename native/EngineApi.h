@@ -14,6 +14,7 @@ struct GO_SESSION;
 
 constexpr std::uint32_t GO_WINDOW_TITLE_CAPACITY = 512;
 constexpr std::uint32_t GO_EXECUTABLE_CAPACITY = 260;
+constexpr std::uint32_t GO_RESTRICTED_SAMPLE_CAPACITY = 320;
 
 struct GO_GAME_TARGET
 {
@@ -33,6 +34,10 @@ struct GO_STATUS
     std::uint32_t Passed;
     std::uint32_t ProcessId;
     std::uint32_t ThreadId;
+    std::uint32_t RestrictedProcessCount;
+    wchar_t RestrictedSample1[GO_RESTRICTED_SAMPLE_CAPACITY];
+    wchar_t RestrictedSample2[GO_RESTRICTED_SAMPLE_CAPACITY];
+    wchar_t RestrictedSample3[GO_RESTRICTED_SAMPLE_CAPACITY];
     wchar_t Message[512];
 };
 

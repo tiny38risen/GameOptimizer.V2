@@ -1,8 +1,9 @@
 #pragma once
 
-#include "EngineInternals.h"
+#include "EngineResult.h"
 
 #include <atomic>
+#include <cstddef>
 #include <optional>
 #include <string>
 #include <utility>
@@ -31,6 +32,12 @@ namespace gameoptimizer::engine
         CpuCoreCandidate WorkerCore{};
     };
 
+    struct AffinityApplyResult
+    {
+        std::size_t RestrictedCount = 0;
+        std::vector<std::wstring> RestrictedSamples;
+    };
+
     class ProcessAffinityController
     {
     public:
@@ -41,11 +48,10 @@ namespace gameoptimizer::engine
         bool HasPendingRecovery() const noexcept; // 저장 affinity 원복 여부 확인
         const std::wstring& LastError() const noexcept { return lastError_; } // 최근 프로세스 affinity 원복 오류 조회
 
-        bool Apply(HANDLE gameProcess, DWORD gameProcessId,
+        [[nodiscard]] Result<AffinityApplyResult> Apply(HANDLE gameProcess, DWORD gameProcessId,
             std::uint64_t gameCreationTime, const std::wstring& gamePath,
             const CpuPlan& plan, const std::wstring& journalPath,
-            const std::atomic<bool>& stopRequested,
-            std::wstring& message); // 게임·나머지 프로세스 CPU 범위 적용·검증
+            const std::atomic<bool>& stopRequested); // 게임·나머지 프로세스 CPU 범위 적용·검증
         bool TryRestore(); // 저장된 프로세스·스레드 CPU 범위 복구
 
     private:

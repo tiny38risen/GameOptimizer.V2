@@ -253,20 +253,42 @@ public partial class MainWindow : Window
             CandidateText.Text = "탐색 중";
         }
 
-        var hasRestrictedProcesses = status.Message.Contains(
-            "제한으로 건너뛴 프로세스", StringComparison.Ordinal);
+        var restrictedWarning = FormatRestrictedProcessWarning(status);
 
         if (status.Confirmed)
         {
             SetButtonState(ButtonState.Applied);
-            ShowStatus("CPU 설정 적용 확인", "설정 적용은 확인했지만, 게임 성능 변화는 측정하지 않았습니다.");
+            ShowStatus("CPU 설정 적용 확인", restrictedWarning.Length > 0
+                ? restrictedWarning
+                : "설정 적용은 확인했지만, 게임 성능 변화는 측정하지 않았습니다.");
         }
         else
         {
             SetButtonState(ButtonState.Running);
             ShowStatus(status.Applied ? "CPU 범위 적용 · 후보 탐색 중" : "CPU 후보 분석 중",
-                hasRestrictedProcesses ? null : status.Message);
+                restrictedWarning.Length > 0 ? restrictedWarning : status.Message);
         }
+    }
+
+    private static string FormatRestrictedProcessWarning(SessionStatus status) // 제한된 프로세스 정보 UI 문장 구성
+    {
+        if (status.RestrictedProcessCount == 0) return string.Empty;
+
+        var samples = new[]
+        {
+            status.RestrictedSample1,
+            status.RestrictedSample2,
+            status.RestrictedSample3
+        }.Where(sample => !string.IsNullOrWhiteSpace(sample)).ToArray();
+
+        var warning = $"제한으로 건너뛴 프로세스 {status.RestrictedProcessCount}개";
+        if (samples.Length > 0)
+        {
+            warning += ": " + string.Join(", ", samples);
+            if (status.RestrictedProcessCount > samples.Length)
+                warning += $" 외 {status.RestrictedProcessCount - samples.Length}개";
+        }
+        return warning + ". 해당 프로세스는 게임 CPU에서 실행될 수 있습니다.";
     }
 
     private void SetButtonState(ButtonState state, bool recoveryRequired = false) // 단계별 버튼 문구·안내 설정

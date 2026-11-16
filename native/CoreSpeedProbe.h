@@ -11,8 +11,6 @@
 
 namespace gameoptimizer::engine
 {
-    using Clock = std::chrono::steady_clock;
-
     struct ProbeSample
     {
         std::uint32_t Lp = 0;
@@ -27,6 +25,6 @@ namespace gameoptimizer::engine
 
     [[nodiscard]] Result<std::vector<SpeedSamples>> ProbeCoreSpeeds(
         std::span<const PhysicalCore> cores, KAFFINITY probeMask,
-        Clock::time_point deadline, std::stop_token token,
+        std::chrono::steady_clock::time_point deadline, std::stop_token token,
         const std::atomic<bool>& sessionStop);
 }

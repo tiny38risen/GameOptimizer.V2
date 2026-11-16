@@ -178,32 +178,37 @@ namespace gameoptimizer::engine
         return true;
     }
 
-    bool ProcessAffinityController::Apply(HANDLE gameProcess, DWORD gameProcessId,
+    Result<AffinityApplyResult> ProcessAffinityController::Apply(HANDLE gameProcess, DWORD gameProcessId,
         std::uint64_t gameCreationTime, const std::wstring& gamePath,
         const CpuPlan& plan, const std::wstring& journalPath,
-        const std::atomic<bool>& stopRequested,
-        std::wstring& message) // 게임에 CPU 2곳 배정·다른 프로세스에서 제외
+        const std::atomic<bool>& stopRequested) // 게임에 CPU 2곳 배정·다른 프로세스에서 제외
     {
+        std::wstring message;
+        const auto fail = [&message]() -> Result<AffinityApplyResult>
+        {
+            return FailText(std::move(message));
+        };
+
         std::erase_if(pending_, [](const PendingRestore& item)
         {
             return WaitForSingleObject(item.Process.Get(), 0) == WAIT_OBJECT_0;
         });
 
         if (!ValidateTarget(gameProcess, gameProcessId, gameCreationTime, gamePath, message))
-            return false;
+            return fail();
 
         if (plan.Reserved.Group != 0 || plan.Game.Group != 0 ||
             plan.Reserved.Mask == 0 || (plan.Game.Mask & ~plan.Reserved.Mask) != 0)
         {
             message = L"CPU 계획의 예약 범위가 올바르지 않습니다.";
-            return false;
+            return fail();
         }
 
         UniqueHandle snapshot(CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0));
         if (!snapshot.IsValid())
         {
             message = ErrorMessage(L"프로세스 목록을 읽지 못했습니다");
-            return false;
+            return fail();
         }
 
         PROCESSENTRY32W entry{};
@@ -212,7 +217,7 @@ namespace gameoptimizer::engine
         if (!hasEntry && GetLastError() != ERROR_NO_MORE_FILES)
         {
             message = ErrorMessage(L"프로세스 목록을 읽지 못했습니다");
-            return false;
+            return fail();
         }
 
         bool foundGame = false;
@@ -236,7 +241,8 @@ namespace gameoptimizer::engine
         };
         while (hasEntry)
         {
-            if (stopRequested.load()) return true;
+            if (stopRequested.load())
+                return AffinityApplyResult{ restrictedProcessCount, std::move(restrictedProcesses) };
 
             const DWORD processId = entry.th32ProcessID;
             if (processId > 4)
@@ -255,7 +261,7 @@ namespace gameoptimizer::engine
                     {
                         message = describeProcess(ErrorMessage(
                             L"프로세스 CPU 범위를 변경할 수 없습니다", openError), entry);
-                        return false;
+                        return fail();
                     }
                 }
                 else if (IsCriticalProcess(process.Get()))
@@ -277,7 +283,7 @@ namespace gameoptimizer::engine
                             {
                                 message = describeProcess(ErrorMessage(
                                     L"프로세스 신원을 확인할 수 없습니다", identityError), entry);
-                                return false;
+                                return fail();
                             }
                         }
                     }
@@ -288,7 +294,7 @@ namespace gameoptimizer::engine
                         if (processId == gameProcessId && !isGame)
                         {
                             message = L"게임 PID의 생성 시각이 달라졌습니다.";
-                            return false;
+                            return fail();
                         }
                         if (isGame) foundGame = true;
 
@@ -303,7 +309,7 @@ namespace gameoptimizer::engine
                             {
                                 message = describeProcess(ErrorMessage(
                                     L"프로세스 CPU 범위를 읽지 못했습니다", queryError), entry);
-                                return false;
+                                return fail();
                             }
                         }
                         else
@@ -317,7 +323,7 @@ namespace gameoptimizer::engine
                             {
                                 message = describeProcess(
                                     L"프로세스에 사용할 CPU 범위를 만들지 못했습니다.", entry);
-                                return false;
+                                return fail();
                             }
 
                             auto pending = std::find_if(pending_.begin(), pending_.end(),
@@ -335,7 +341,7 @@ namespace gameoptimizer::engine
                                 {
                                     message = describeProcess(
                                         L"프로세스 CPU 범위가 외부에서 변경되었습니다.", entry);
-                                    return false;
+                                    return fail();
                                 }
                             }
 
@@ -362,7 +368,7 @@ namespace gameoptimizer::engine
                                         else
                                         {
                                             message = describeProcess(message, entry);
-                                            return false;
+                                            return fail();
                                         }
                                     }
                                     else
@@ -373,11 +379,11 @@ namespace gameoptimizer::engine
                                                 processId, creationTime, thread.ThreadId,
                                                 thread.CreationFileTime, thread.OriginalAffinity,
                                                 currentMask, desiredMask, message))
-                                                return false;
+                                                return fail();
                                         }
                                         if (!RecordProcessAffinity(journalPath, processId,
                                             creationTime, currentMask, desiredMask, message))
-                                            return false;
+                                            return fail();
                                         pending_.emplace_back(std::move(process), processId,
                                             creationTime, currentMask, desiredMask,
                                             std::move(originalThreads));
@@ -389,7 +395,7 @@ namespace gameoptimizer::engine
                                 {
                                     if (!RecordProcessAffinity(journalPath, processId,
                                         creationTime, currentMask, desiredMask, message))
-                                        return false;
+                                        return fail();
                                     pending->AppliedMask = desiredMask;
                                     pending->NeedsRestore = pending->OriginalMask != desiredMask;
                                 }
@@ -414,7 +420,7 @@ namespace gameoptimizer::engine
                                     {
                                         message = describeProcess(ErrorMessage(
                                             L"프로세스 CPU 범위를 적용하지 못했습니다", applyError), entry);
-                                        return false;
+                                        return fail();
                                     }
                                 }
 
@@ -427,7 +433,7 @@ namespace gameoptimizer::engine
                                     {
                                         message = describeProcess(
                                             L"프로세스 CPU 범위 적용 후 읽기 검증에 실패했습니다.", entry);
-                                        return false;
+                                        return fail();
                                     }
                                 }
                             }
@@ -446,35 +452,18 @@ namespace gameoptimizer::engine
             if (!hasEntry && GetLastError() != ERROR_NO_MORE_FILES)
             {
                 message = ErrorMessage(L"프로세스 목록을 끝까지 읽지 못했습니다");
-                return false;
+                return fail();
             }
         }
 
         if (!foundGame)
         {
             message = L"게임 프로세스를 전체 프로세스 목록에서 찾지 못했습니다.";
-            return false;
+            return fail();
         }
 
         lastError_.clear();
-        message = L"게임과 접근 가능한 프로세스의 CPU 범위를 적용하고 확인했습니다.";
-        if (restrictedProcessCount > 0)
-        {
-            message += L" 제한으로 건너뛴 프로세스 " +
-                std::to_wstring(restrictedProcessCount) + L"개: ";
-            for (std::size_t index = 0; index < restrictedProcesses.size(); ++index)
-            {
-                if (index > 0) message += L", ";
-                message += restrictedProcesses[index];
-            }
-            if (restrictedProcessCount > restrictedProcesses.size())
-            {
-                message += L" 외 " +
-                    std::to_wstring(restrictedProcessCount - restrictedProcesses.size()) + L"개";
-            }
-            message += L". 해당 프로세스는 게임 CPU에서 실행될 수 있습니다.";
-        }
-        return true;
+        return AffinityApplyResult{ restrictedProcessCount, std::move(restrictedProcesses) };
     }
 
     bool ProcessAffinityController::TryRestore() // 저장된 프로세스·스레드 affinity 복구·검증

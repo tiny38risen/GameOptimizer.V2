@@ -10,6 +10,7 @@
 #include "ResidualLoad.h"
 #include "ThreadPolicy.h"
 #include "ThreadTracker.h"
+#include "TuningConfig.h"
 
 #include <Windows.h>
 
@@ -32,7 +33,7 @@
 static_assert(sizeof(wchar_t) == 2, "The C ABI requires Windows UTF-16 wchar_t.");
 static_assert(offsetof(GO_GAME_TARGET, WindowTitle) == 20);
 static_assert(sizeof(GO_GAME_TARGET) == 1568);
-static_assert(sizeof(GO_STATUS) == 1052);
+static_assert(sizeof(GO_STATUS) == 2976);
 
 namespace gameoptimizer::engine
 {
@@ -40,7 +41,6 @@ namespace gameoptimizer::engine
     {
         constexpr auto SampleInterval = std::chrono::milliseconds(900);
         constexpr DWORD AutomaticProcessPriorityClass = HIGH_PRIORITY_CLASS;
-        constexpr double ResidualWarningPercent = 5.0;
 
         std::wstring FormatSelectedCore(const CpuCoreCandidate& core) // 선택 코어·논리 CPU 정보 구성
         {
@@ -53,6 +53,25 @@ namespace gameoptimizer::engine
                     static_cast<unsigned int>(*core.EfficiencyClass));
             text += L')';
             return text;
+        }
+
+        void SetRestrictedProcessStatus(GO_STATUS& status,
+            const AffinityApplyResult& result) noexcept
+        {
+            status.RestrictedProcessCount = static_cast<std::uint32_t>(result.RestrictedCount);
+            wchar_t* buffers[] =
+            {
+                status.RestrictedSample1,
+                status.RestrictedSample2,
+                status.RestrictedSample3
+            };
+            for (std::size_t index = 0; index < std::size(buffers); ++index)
+            {
+                buffers[index][0] = L'\0';
+                if (index < result.RestrictedSamples.size())
+                    wcsncpy_s(buffers[index], GO_RESTRICTED_SAMPLE_CAPACITY,
+                        result.RestrictedSamples[index].c_str(), _TRUNCATE);
+            }
         }
     }
 
@@ -143,6 +162,7 @@ namespace gameoptimizer::engine
             status_.Applied = HasPendingRecovery() ? 1U : 0U;
             status_.ProcessId = processId_;
             status_.ThreadId = observation.HasCandidate ? observation.Candidate.ThreadId : 0;
+            SetRestrictedProcessStatus(status_, affinityApplyResult_);
             status_.RecoveryRequired = 0;
             status_.Passed = 1;
             SetMessage(status_, message);
@@ -154,229 +174,209 @@ namespace gameoptimizer::engine
             wake_.wait_for(lock, SampleInterval, [this] { return stopRequested_.load(); });
         }
 
-        void RunWorker() noexcept // CPU 선택·후보 배정·오류 처리·원복
+        std::wstring AddStatusContext(std::wstring statusMessage) const
         {
-            bool passed = true;
-            std::wstring message = L"중단했고 원래 설정 복구를 확인했습니다.";
-            std::wstring partialAffinityWarning;
-            std::wstring cpuPlanNote;
-            std::wstring residualNote;
-            std::optional<ThreadIdentity> lastCandidate;
-            bool residualChecked = false;
+            statusMessage = cpuPlanNote_ + statusMessage;
+            if (!residualNote_.empty())
+                statusMessage += L" " + residualNote_;
+            return statusMessage;
+        }
 
-            const auto AddAffinityWarning = [&partialAffinityWarning,
-                &cpuPlanNote, &residualNote](std::wstring statusMessage)
+        Result<void> PreparePlan() // CPU 측정·코어 계획 선정
+        {
+            diagnostics_.Write(L"target pid={} creation={}",
+                processId_, processCreationTime_);
+            diagnostics_.Write(L"session path={}", processPath_);
+            auto selectedPlan = SelectCpuPlan(process_.Get(), stopRequested_, diagnostics_);
+            if (!selectedPlan)
             {
-                statusMessage = cpuPlanNote + statusMessage;
-                if (!partialAffinityWarning.empty())
-                    statusMessage += L" " + partialAffinityWarning;
-                if (!residualNote.empty())
-                    statusMessage += L" " + residualNote;
-                return statusMessage;
-            };
+                if (selectedPlan.error().Is(ErrorKind::Cancelled)) return {};
+                return std::unexpected(selectedPlan.error());
+            }
+
+            cpuPlan_ = std::move(*selectedPlan);
+            cpuPlanNote_ = L"선택 코어: " + FormatSelectedCore(cpuPlan_->DominantCore) +
+                L" · " + FormatSelectedCore(cpuPlan_->WorkerCore) + L". ";
+            return {};
+        }
+
+        Result<void> ApplyProcessPolicy() // 프로세스 affinity·우선순위 적용
+        {
+            if (!cpuPlan_ || stopRequested_.load()) return {};
+
+            auto affinityResult = processAffinity_.Apply(process_.Get(), processId_,
+                processCreationTime_, processPath_, *cpuPlan_, journalPath_, stopRequested_);
+            if (!affinityResult)
+                return std::unexpected(affinityResult.error());
+
+            affinityApplyResult_ = std::move(*affinityResult);
+            workerMessage_ = L"게임과 접근 가능한 프로세스의 CPU 범위를 적용하고 확인했습니다. CPU 지배 스레드를 관찰합니다.";
+            Publish({}, AddStatusContext(workerMessage_));
+
+            std::wstring priorityMessage;
+            if (!processPriority_.Apply(process_.Get(), processId_, processCreationTime_,
+                processPath_, AutomaticProcessPriorityClass, journalPath_,
+                stopRequested_, priorityMessage))
+                return FailText(std::move(priorityMessage));
+
+            if (!priorityMessage.empty())
+            {
+                workerMessage_ = AddStatusContext(priorityMessage + L" CPU 후보를 관찰합니다.");
+                Publish({}, workerMessage_);
+            }
+            return {};
+        }
+
+        Result<void> ObserveLoop() // 지배 스레드 관찰·배치·사후 확인
+        {
+            if (!cpuPlan_ || stopRequested_.load()) return {};
+
+            while (!stopRequested_.load())
+            {
+                std::wstring error;
+                if (!ValidateTarget(process_.Get(), processId_, processCreationTime_, processPath_, error))
+                    return FailText(std::move(error));
+
+                affinityApplyResult_ = {};
+                auto affinityResult = processAffinity_.Apply(process_.Get(), processId_,
+                    processCreationTime_, processPath_, *cpuPlan_, journalPath_, stopRequested_);
+                if (!affinityResult)
+                    return std::unexpected(affinityResult.error());
+                affinityApplyResult_ = std::move(*affinityResult);
+                if (stopRequested_.load()) break;
+
+                const CandidateObservation observation = tracker_.Observe(processId_);
+                if (stopRequested_.load()) break;
+                if (observation.HasCandidate) lastCandidate_ = observation.Candidate;
+
+                if (observation.HasCandidate && observation.Confirmed)
+                {
+                    if (lastHandledCandidate_ && !(*lastHandledCandidate_ == observation.Candidate) &&
+                        policy_.HasPendingRecovery())
+                    {
+                        if (!policy_.TryRestore())
+                        {
+                            return FailText(L"이전 후보의 복구를 확인하지 못해 새 후보를 변경하지 않았습니다: " + policy_.LastError());
+                        }
+                    }
+
+                    const ApplyResult applied = policy_.Apply(process_.Get(), processId_,
+                        processCreationTime_, processPath_, *cpuPlan_, observation.Candidate,
+                        journalPath_, stopRequested_);
+                    if (!applied.Success)
+                        return FailText(applied.Message);
+                    lastHandledCandidate_ = observation.Candidate;
+
+                    const std::wstring appliedStatus = HasPendingRecovery()
+                        ? L"안정 후보를 확인했고 자동 CPU 설정을 적용했습니다. 중단하면 원복합니다."
+                        : L"안정 후보가 자동 CPU 설정을 사용 중입니다.";
+                    Publish(observation, AddStatusContext(appliedStatus));
+
+                    if (!residualChecked_)
+                    {
+                        residualChecked_ = true;
+                        if (const auto residual = MeasureResidualLoad(
+                            *cpuPlan_, observation.Candidate, process_.Get(), stopRequested_))
+                        {
+                            diagnostics_.Write(
+                                L"residual thread={:.1f}% dominantLp={:.1f}% sibling={}",
+                                residual->DominantThreadPercent,
+                                residual->DominantLpResidualPercent,
+                                residual->SiblingPercent
+                                    ? std::format(L"{:.1f}%", *residual->SiblingPercent)
+                                    : std::wstring(L"none"));
+                            const auto& counters = residual->Counters;
+                            for (std::size_t lp = 0;
+                                lp < counters.ProcessorTime.size(); ++lp)
+                                diagnostics_.Write(
+                                    L"residual lp={} busy={:.1f} int={:.1f} dpc={:.1f}",
+                                    lp, counters.ProcessorTime[lp],
+                                    counters.InterruptTime[lp], counters.DpcTime[lp]);
+
+                            const double worst = std::max(
+                                residual->DominantLpResidualPercent,
+                                residual->SiblingPercent.value_or(0.0));
+                            if (worst > tuning::ResidualWarningPercent)
+                            {
+                                residualNote_ = std::format(
+                                    L"지배 코어에 옮길 수 없는 부하 {:.1f}%가 있습니다.", worst);
+                                Publish(observation, AddStatusContext(appliedStatus));
+                            }
+                        }
+                        else if (!residual.error().Is(ErrorKind::Cancelled))
+                        {
+                            diagnostics_.Write(L"residual check failed kind={} code={:#x}: {}",
+                                ToString(residual.error().Kind), residual.error().Code,
+                                residual.error().Message);
+                        }
+                        if (stopRequested_.load()) break;
+                    }
+                }
+                else
+                {
+                    if (policy_.HasPendingRecovery())
+                    {
+                        if (!policy_.TryRestore())
+                            return FailText(L"후보 근거가 끊겼고 원래 설정을 복구하지 못했습니다: " + policy_.LastError());
+                        lastHandledCandidate_.reset();
+                    }
+
+                    const std::wstring statusMessage = AddStatusContext(observation.HasCandidate
+                        ? L"TID " + std::to_wstring(observation.Candidate.ThreadId) + L"의 후보 안정성을 확인 중입니다."
+                        : observation.Detail);
+                    Publish(observation, statusMessage);
+                }
+
+                WaitForNextSample();
+            }
+
+            return {};
+        }
+
+        void RunWorker() noexcept // 처리 단계 실행·결과 기록·원복
+        {
+            resultPassed_ = true;
+            workerMessage_ = L"중단했고 원래 설정 복구를 확인했습니다.";
 
             try
             {
-                diagnostics_.Write(L"target pid={} creation={}",
-                    processId_, processCreationTime_);
-                diagnostics_.Write(L"session path={}", processPath_);
-                auto selectedPlan = SelectCpuPlan(process_.Get(), stopRequested_, diagnostics_);
-                if (selectedPlan)
-                    cpuPlan_ = std::move(*selectedPlan);
-                else if (selectedPlan.error().Code != ERROR_CANCELLED)
+                auto result = PreparePlan();
+                if (result) result = ApplyProcessPolicy();
+                if (result) result = ObserveLoop();
+                if (!result)
                 {
-                    passed = false;
-                    message = selectedPlan.error().Message;
+                    resultPassed_ = false;
+                    workerMessage_ = result.error().Message;
                 }
-
-                if (passed && cpuPlan_)
-                {
-                    cpuPlanNote = L"선택 코어: " + FormatSelectedCore(cpuPlan_->DominantCore) +
-                        L" · " + FormatSelectedCore(cpuPlan_->WorkerCore) + L". ";
-                    std::wstring affinityMessage;
-                    if (!processAffinity_.Apply(process_.Get(), processId_,
-                        processCreationTime_, processPath_, *cpuPlan_, journalPath_, stopRequested_,
-                        affinityMessage))
-                    {
-                        passed = false;
-                        message = affinityMessage;
-                    }
-                    else
-                    {
-                        const std::wstring warningMarker = L"제한으로 건너뛴 프로세스";
-                        const std::size_t warningPosition = affinityMessage.find(warningMarker);
-                        if (warningPosition != std::wstring::npos)
-                            partialAffinityWarning = affinityMessage.substr(warningPosition);
-                        message = affinityMessage + L" CPU 지배 스레드를 관찰합니다.";
-                        Publish({}, AddAffinityWarning(message));
-                    }
-                }
-
-                if (passed && cpuPlan_)
-                {
-                    std::wstring priorityMessage;
-                    if (!processPriority_.Apply(process_.Get(), processId_, processCreationTime_,
-                        processPath_, AutomaticProcessPriorityClass, journalPath_,
-                        stopRequested_, priorityMessage))
-                    {
-                        passed = false;
-                        message = priorityMessage;
-                    }
-                    else if (!priorityMessage.empty())
-                    {
-                        message = AddAffinityWarning(priorityMessage + L" CPU 후보를 관찰합니다.");
-                        Publish({}, message);
-                    }
-                }
-
-                while (passed && cpuPlan_ && !stopRequested_.load())
-                {
-                    std::wstring error;
-                    if (!ValidateTarget(process_.Get(), processId_, processCreationTime_, processPath_, error))
-                    {
-                        passed = false;
-                        message = error;
-                        break;
-                    }
-
-                    partialAffinityWarning.clear();
-                    std::wstring affinityMessage;
-                    if (!processAffinity_.Apply(process_.Get(), processId_,
-                        processCreationTime_, processPath_, *cpuPlan_, journalPath_, stopRequested_,
-                        affinityMessage))
-                    {
-                        passed = false;
-                        message = affinityMessage;
-                        break;
-                    }
-                    const std::wstring warningMarker = L"제한으로 건너뛴 프로세스";
-                    const std::size_t warningPosition = affinityMessage.find(warningMarker);
-                    if (warningPosition != std::wstring::npos)
-                        partialAffinityWarning = affinityMessage.substr(warningPosition);
-                    if (stopRequested_.load()) break;
-
-                    const CandidateObservation observation = tracker_.Observe(processId_);
-                    if (stopRequested_.load()) break;
-                    if (observation.HasCandidate) lastCandidate = observation.Candidate;
-
-                    if (observation.HasCandidate && observation.Confirmed)
-                    {
-                        if (lastHandledCandidate_ && !(*lastHandledCandidate_ == observation.Candidate) &&
-                            policy_.HasPendingRecovery())
-                        {
-                            if (!policy_.TryRestore())
-                            {
-                                passed = false;
-                                message = L"이전 후보의 복구를 확인하지 못해 새 후보를 변경하지 않았습니다: " + policy_.LastError();
-                                break;
-                            }
-                        }
-
-                        const ApplyResult applied = policy_.Apply(process_.Get(), processId_,
-                            processCreationTime_, processPath_, *cpuPlan_, observation.Candidate,
-                            journalPath_, stopRequested_);
-                        if (!applied.Success)
-                        {
-                            passed = false;
-                            message = applied.Message;
-                            break;
-                        }
-                        lastHandledCandidate_ = observation.Candidate;
-
-                        const std::wstring appliedStatus = HasPendingRecovery()
-                            ? L"안정 후보를 확인했고 자동 CPU 설정을 적용했습니다. 중단하면 원복합니다."
-                            : L"안정 후보가 자동 CPU 설정을 사용 중입니다.";
-                        Publish(observation, AddAffinityWarning(appliedStatus));
-
-                        if (!residualChecked)
-                        {
-                            residualChecked = true;
-                            if (const auto residual = MeasureResidualLoad(
-                                *cpuPlan_, observation.Candidate, process_.Get(), stopRequested_))
-                            {
-                                diagnostics_.Write(
-                                    L"residual thread={:.1f}% dominantLp={:.1f}% sibling={}",
-                                    residual->DominantThreadPercent,
-                                    residual->DominantLpResidualPercent,
-                                    residual->SiblingPercent
-                                        ? std::format(L"{:.1f}%", *residual->SiblingPercent)
-                                        : std::wstring(L"none"));
-                                const auto& counters = residual->Counters;
-                                for (std::size_t lp = 0;
-                                    lp < counters.ProcessorTime.size(); ++lp)
-                                    diagnostics_.Write(
-                                        L"residual lp={} busy={:.1f} int={:.1f} dpc={:.1f}",
-                                        lp, counters.ProcessorTime[lp],
-                                        counters.InterruptTime[lp], counters.DpcTime[lp]);
-
-                                const double worst = std::max(
-                                    residual->DominantLpResidualPercent,
-                                    residual->SiblingPercent.value_or(0.0));
-                                if (worst > ResidualWarningPercent)
-                                {
-                                    residualNote = std::format(
-                                        L"지배 코어에 옮길 수 없는 부하 {:.1f}%가 있습니다.", worst);
-                                    Publish(observation, AddAffinityWarning(appliedStatus));
-                                }
-                            }
-                            else if (residual.error().Code != ERROR_CANCELLED)
-                            {
-                                diagnostics_.Write(L"residual check failed: {}",
-                                    residual.error().Message);
-                            }
-                            if (stopRequested_.load()) break;
-                        }
-                    }
-                    else
-                    {
-                        if (policy_.HasPendingRecovery())
-                        {
-                            if (!policy_.TryRestore())
-                            {
-                                passed = false;
-                                message = L"후보 근거가 끊겼고 원래 설정을 복구하지 못했습니다: " + policy_.LastError();
-                                break;
-                            }
-                            lastHandledCandidate_.reset();
-                        }
-
-                        const std::wstring statusMessage = AddAffinityWarning(observation.HasCandidate
-                            ? L"TID " + std::to_wstring(observation.Candidate.ThreadId) + L"의 후보 안정성을 확인 중입니다."
-                            : observation.Detail);
-                        Publish(observation, statusMessage);
-                    }
-
-                    WaitForNextSample();
-                }
-
-                if (stopRequested_.load() && passed)
-                    message = L"중단했고 원래 설정 복구를 확인했습니다.";
             }
             catch (...)
             {
-                passed = false;
-                message = L"C++ 엔진 실행 중 오류가 발생했습니다.";
+                resultPassed_ = false;
+                workerMessage_ = L"C++ 엔진 실행 중 오류가 발생했습니다.";
             }
+
+            if (resultPassed_ && stopRequested_.load())
+                workerMessage_ = L"중단했고 원래 설정 복구를 확인했습니다.";
 
             if (!TryRestorePolicies())
             {
-                passed = false;
-                message = L"원래 설정 복구를 확인하지 못했습니다. 재시도 전에는 새 적용을 차단합니다: " + RecoveryError();
+                resultPassed_ = false;
+                workerMessage_ = L"원래 설정 복구를 확인하지 못했습니다. 재시도 전에는 새 적용을 차단합니다: " + RecoveryError();
             }
 
-            resultPassed_ = passed;
-            resultMessage_ = message;
+            resultMessage_ = workerMessage_;
             {
                 std::lock_guard lock(statusMutex_);
                 completed_ = true;
-                status_.HasCandidate = lastCandidate ? 1U : 0U;
+                status_.HasCandidate = lastCandidate_ ? 1U : 0U;
                 status_.Confirmed = 0;
                 status_.Applied = HasPendingRecovery() ? 1U : 0U;
                 status_.RecoveryRequired = HasPendingRecovery() ? 1U : 0U;
-                status_.Passed = passed && !HasPendingRecovery() ? 1U : 0U;
+                status_.Passed = resultPassed_ && !HasPendingRecovery() ? 1U : 0U;
                 status_.ProcessId = processId_;
-                status_.ThreadId = lastCandidate ? lastCandidate->ThreadId : 0;
-                SetMessage(status_, message);
+                status_.ThreadId = lastCandidate_ ? lastCandidate_->ThreadId : 0;
+                SetRestrictedProcessStatus(status_, affinityApplyResult_);
+                SetMessage(status_, workerMessage_);
             }
             completedCondition_.notify_all();
         }
@@ -420,7 +420,13 @@ namespace gameoptimizer::engine
         ProcessPriorityController processPriority_;
         ThreadPolicyController policy_;
         std::optional<CpuPlan> cpuPlan_;
+        std::wstring cpuPlanNote_;
+        std::wstring residualNote_;
+        std::optional<ThreadIdentity> lastCandidate_;
         std::optional<ThreadIdentity> lastHandledCandidate_;
+        AffinityApplyResult affinityApplyResult_;
+        std::wstring workerMessage_;
+        bool residualChecked_ = false;
         std::atomic<bool> stopRequested_{ false };
         std::mutex statusMutex_;
         std::condition_variable wake_;

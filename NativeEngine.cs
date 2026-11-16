@@ -108,13 +108,22 @@ internal struct NativeEngineStatus
     internal uint Passed;
     internal uint ProcessId;
     internal uint ThreadId;
+    internal uint RestrictedProcessCount;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 320)]
+    internal string RestrictedSample1;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 320)]
+    internal string RestrictedSample2;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 320)]
+    internal string RestrictedSample3;
     [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 512)]
     internal string Message;
 
     internal SessionStatus ToSessionStatus() // 네이티브 상태의 진행 UI 모델 변환
         => new(
         HasCandidate != 0, Confirmed != 0, Applied != 0,
-        ProcessId, ThreadId, Message ?? string.Empty);
+        ProcessId, ThreadId, RestrictedProcessCount,
+        RestrictedSample1 ?? string.Empty, RestrictedSample2 ?? string.Empty,
+        RestrictedSample3 ?? string.Empty, Message ?? string.Empty);
 
     internal SessionResult ToSessionResult() // 네이티브 상태의 완료 결과 모델 변환
         => new(
@@ -124,7 +133,9 @@ internal struct NativeEngineStatus
 
 internal sealed record SessionStatus(
     bool HasCandidate, bool Confirmed, bool Applied,
-    uint ProcessId, uint ThreadId, string Message);
+    uint ProcessId, uint ThreadId, uint RestrictedProcessCount,
+    string RestrictedSample1, string RestrictedSample2, string RestrictedSample3,
+    string Message);
 
 internal sealed record SessionResult(
     bool Passed, bool RecoveryRequired, string Message,

@@ -4,6 +4,7 @@
 #include "CpuTopology.h"
 #include "EngineResult.h"
 #include "ProcessorCounters.h"
+#include "TuningConfig.h"
 
 #include <cstddef>
 #include <span>
@@ -44,8 +45,8 @@ namespace gameoptimizer::engine
     };
 
     inline constexpr SelectionConfig DefaultSelectionConfig{
-        .SpeedTolerancePercent = 1.0,
-        .InterruptDpcTolerancePercent = 0.5 };
+        .SpeedTolerancePercent = tuning::SpeedTolerancePercent,
+        .InterruptDpcTolerancePercent = tuning::InterruptDpcTolerancePercent };
 
     [[nodiscard]] std::vector<CoreMeasurement> BuildMeasurements(
         std::span<const PhysicalCore> topology, const CounterSample& counters,

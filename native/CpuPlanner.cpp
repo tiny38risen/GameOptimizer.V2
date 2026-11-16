@@ -5,6 +5,7 @@
 #include "CpuTopology.h"
 #include "DiagnosticLog.h"
 #include "ProcessorCounters.h"
+#include "TuningConfig.h"
 
 #include <TlHelp32.h>
 
@@ -19,10 +20,6 @@ namespace gameoptimizer::engine
 {
     namespace
     {
-        using namespace std::chrono_literals;
-        constexpr auto CounterInterval = 500ms;
-        constexpr auto MeasurementBudget = 9500ms;
-
         Result<void> LogSpecialThreadAffinities(HANDLE process, KAFFINITY processMask,
             DiagnosticLog& log)
         {
@@ -163,8 +160,7 @@ namespace gameoptimizer::engine
         log.Write(L"game affinity original={:#x} system={:#x}", gameMask, systemMask);
 
         if (WaitForSingleObject(gameProcess, 0) != WAIT_TIMEOUT)
-            return std::unexpected(EngineError{
-                L"측정 시작 전에 대상 게임이 종료되었습니다.", ERROR_PROCESS_ABORTED });
+            return TargetExited(L"측정 시작 전에 대상 게임이 종료되었습니다.");
         auto specialThreads = LogSpecialThreadAffinities(gameProcess, gameMask, log);
         if (!specialThreads) return std::unexpected(specialThreads.error());
 
@@ -181,45 +177,41 @@ namespace gameoptimizer::engine
         if (probeMask == 0)
             return FailText(L"게임과 측정 프로그램이 함께 사용할 CPU가 없습니다.");
 
-        const auto measureStarted = Clock::now();
-        const auto measureDeadline = measureStarted + MeasurementBudget;
-        std::stop_source measureStop;
+        const auto measureStarted = tuning::Clock::now();
+        const auto measureDeadline = measureStarted + tuning::MeasurementBudget;
         Result<std::vector<SpeedSamples>> speeds =
             FailText(L"코어 속도 측정이 완료되지 않았습니다.");
-        std::jthread probe([&]
+        std::jthread probe([&](std::stop_token token)
         {
             try
             {
                 speeds = ProbeCoreSpeeds(*topology, probeMask, measureDeadline,
-                    measureStop.get_token(), stopRequested);
+                    token, stopRequested);
             }
             catch (...)
             {
                 speeds = FailText(L"코어 속도 측정 중 오류가 발생했습니다.");
             }
-            if (!speeds) measureStop.request_stop();
         });
 
-        auto counters = ReadProcessorCountersUntil(CounterInterval, measureDeadline,
-            measureStop.get_token(), stopRequested, gameProcess);
-        if (!counters) measureStop.request_stop();
+        auto counters = ReadProcessorCountersUntil(tuning::MeasurementCounterInterval, measureDeadline,
+            probe.get_stop_token(), stopRequested, gameProcess);
+        if (!counters) probe.request_stop();
         probe.join();
 
         const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-            Clock::now() - measureStarted).count();
+            tuning::Clock::now() - measureStarted).count();
         log.Write(L"measure elapsed={}ms", elapsed);
 
-        if (!counters && counters.error().Code != ERROR_CANCELLED)
+        if (!counters && !counters.error().Is(ErrorKind::Cancelled))
             return std::unexpected(counters.error());
-        if (!speeds && speeds.error().Code != ERROR_CANCELLED)
+        if (!speeds && !speeds.error().Is(ErrorKind::Cancelled))
             return std::unexpected(speeds.error());
-        if (stopRequested.load())
+        if (stopRequested.load() || !counters || !speeds)
         {
             log.Write(L"measure cancelled");
             return Cancelled();
         }
-        if (!counters) return std::unexpected(counters.error());
-        if (!speeds) return std::unexpected(speeds.error());
 
         LogSpeedSamples(log, *topology, *speeds);
         const auto cores = BuildMeasurements(*topology, *counters, *speeds);
@@ -231,7 +223,9 @@ namespace gameoptimizer::engine
         auto selection = SelectCores(cores, gameMask, systemMask, DefaultSelectionConfig);
         if (!selection)
         {
-            log.Write(L"selection failed: {}", selection.error().Message);
+            log.Write(L"selection failed kind={} code={:#x}: {}",
+                ToString(selection.error().Kind), selection.error().Code,
+                selection.error().Message);
             return std::unexpected(selection.error());
         }
 

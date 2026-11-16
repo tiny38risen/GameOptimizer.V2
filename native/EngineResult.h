@@ -4,18 +4,33 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <expected>
+#include <format>
 #include <span>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 
 namespace gameoptimizer::engine
 {
+    enum class ErrorKind : std::uint8_t
+    {
+        Cancelled,
+        TargetExited,
+        InvalidData,
+        Win32,
+        Pdh,
+    };
+
     struct EngineError
     {
+        ErrorKind Kind = ErrorKind::InvalidData;
         std::wstring Message;
-        DWORD Code = ERROR_SUCCESS;
+        std::uint32_t Code = 0;
+
+        [[nodiscard]] bool Is(ErrorKind kind) const noexcept { return Kind == kind; }
     };
 
     template <class T>
@@ -24,17 +39,53 @@ namespace gameoptimizer::engine
     [[nodiscard]] inline std::unexpected<EngineError> Fail(
         const wchar_t* message, DWORD code = GetLastError())
     {
-        return std::unexpected(EngineError{ ErrorMessage(message, code), code });
+        return std::unexpected(EngineError{ .Kind = ErrorKind::Win32,
+            .Message = ErrorMessage(message, code), .Code = code });
+    }
+
+    [[nodiscard]] inline std::unexpected<EngineError> FailPdh(
+        std::wstring_view message, LONG status)
+    {
+        const auto code = static_cast<std::uint32_t>(status);
+        return std::unexpected(EngineError{ .Kind = ErrorKind::Pdh,
+            .Message = std::format(L"{} (PDH 0x{:08X})", message, code), .Code = code });
     }
 
     [[nodiscard]] inline std::unexpected<EngineError> FailText(std::wstring message)
     {
-        return std::unexpected(EngineError{ std::move(message), ERROR_INVALID_DATA });
+        return std::unexpected(EngineError{ .Kind = ErrorKind::InvalidData,
+            .Message = std::move(message) });
+    }
+
+    [[nodiscard]] inline std::unexpected<EngineError> TargetExited(std::wstring message)
+    {
+        return std::unexpected(EngineError{ .Kind = ErrorKind::TargetExited,
+            .Message = std::move(message) });
     }
 
     [[nodiscard]] inline std::unexpected<EngineError> Cancelled()
     {
-        return std::unexpected(EngineError{ L"중단 요청을 받았습니다.", ERROR_CANCELLED });
+        return std::unexpected(EngineError{ .Kind = ErrorKind::Cancelled,
+            .Message = L"중단 요청을 받았습니다." });
+    }
+
+    template <class T>
+    [[nodiscard]] bool IsCancelled(const Result<T>& result) noexcept
+    {
+        return !result && result.error().Is(ErrorKind::Cancelled);
+    }
+
+    [[nodiscard]] constexpr std::wstring_view ToString(ErrorKind kind) noexcept
+    {
+        switch (kind)
+        {
+        case ErrorKind::Cancelled: return L"cancelled";
+        case ErrorKind::TargetExited: return L"target-exited";
+        case ErrorKind::InvalidData: return L"invalid-data";
+        case ErrorKind::Win32: return L"win32";
+        case ErrorKind::Pdh: return L"pdh";
+        }
+        return L"unknown";
     }
 
     // Visits variable-length records with a Size field. A bool visitor can

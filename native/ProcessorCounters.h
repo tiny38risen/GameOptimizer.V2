@@ -4,12 +4,13 @@
 
 #include <atomic>
 #include <chrono>
+#include <functional>
 #include <stop_token>
 #include <vector>
 
 namespace gameoptimizer::engine
 {
-    using CounterWindowCallback = void (*)(void* context, bool starting) noexcept;
+    using CounterWindowCallback = std::function<void(bool)>;
 
     struct CounterSample
     {
@@ -23,7 +24,7 @@ namespace gameoptimizer::engine
     [[nodiscard]] Result<CounterSample> ReadProcessorCounters(
         std::chrono::milliseconds interval, int samples,
         const std::atomic<bool>& stop, HANDLE monitoredProcess = nullptr,
-        CounterWindowCallback windowCallback = nullptr, void* callbackContext = nullptr);
+        CounterWindowCallback windowCallback = {});
 
     [[nodiscard]] Result<CounterSample> ReadProcessorCountersUntil(
         std::chrono::milliseconds interval, std::chrono::steady_clock::time_point deadline,

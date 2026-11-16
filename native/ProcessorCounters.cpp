@@ -1,4 +1,5 @@
 #include "ProcessorCounters.h"
+#include "TuningConfig.h"
 
 #include <Pdh.h>
 #include <PdhMsg.h>
@@ -22,8 +23,6 @@ namespace gameoptimizer::engine
 {
     namespace
     {
-        using Clock = std::chrono::steady_clock;
-
         struct PdhQueryCloser
         {
             void operator()(PDH_HQUERY query) const noexcept
@@ -38,14 +37,6 @@ namespace gameoptimizer::engine
             L"\\Processor Information(*)\\% Interrupt Time",
             L"\\Processor Information(*)\\% DPC Time" };
 
-        [[nodiscard]] std::unexpected<EngineError> PdhFail(
-            std::wstring_view message, PDH_STATUS status)
-        {
-            return std::unexpected(EngineError{
-                std::format(L"{} (PDH 0x{:08X})", message, static_cast<std::uint32_t>(status)),
-                static_cast<DWORD>(status) });
-        }
-
         [[nodiscard]] bool StopRequested(std::stop_token token,
             const std::atomic<bool>& stop) noexcept
         {
@@ -57,23 +48,22 @@ namespace gameoptimizer::engine
             return !process || WaitForSingleObject(process, 0) == WAIT_TIMEOUT;
         }
 
-        [[nodiscard]] Result<void> WaitUntil(Clock::time_point target,
+        [[nodiscard]] Result<void> WaitUntil(tuning::Clock::time_point target,
             std::stop_token token, const std::atomic<bool>& stop, HANDLE process)
         {
-            while (Clock::now() < target)
+            while (tuning::Clock::now() < target)
             {
                 if (StopRequested(token, stop)) return Cancelled();
                 if (!TargetAlive(process))
-                    return std::unexpected(EngineError{
-                        L"측정 중 대상 게임이 종료되었습니다.", ERROR_PROCESS_ABORTED });
+                    return TargetExited(L"측정 중 대상 게임이 종료되었습니다.");
 
-                const auto nextCheck = std::min(target, Clock::now() + std::chrono::milliseconds(20));
+                const auto nextCheck = std::min(target,
+                    tuning::Clock::now() + std::chrono::milliseconds(20));
                 std::this_thread::sleep_until(nextCheck);
             }
             if (StopRequested(token, stop)) return Cancelled();
             if (!TargetAlive(process))
-                return std::unexpected(EngineError{
-                    L"측정 중 대상 게임이 종료되었습니다.", ERROR_PROCESS_ABORTED });
+                return TargetExited(L"측정 중 대상 게임이 종료되었습니다.");
             return {};
         }
 
@@ -91,14 +81,14 @@ namespace gameoptimizer::engine
             PDH_STATUS status = PdhGetFormattedCounterArrayW(counter, PDH_FMT_DOUBLE,
                 &bytes, &items, nullptr);
             if (status != PDH_MORE_DATA || bytes == 0)
-                return PdhFail(L"CPU 카운터 목록을 읽지 못했습니다", status);
+                return FailPdh(L"CPU 카운터 목록을 읽지 못했습니다", status);
 
             std::vector<std::byte> buffer(bytes);
             auto* values = reinterpret_cast<PDH_FMT_COUNTERVALUE_ITEM_W*>(buffer.data());
             status = PdhGetFormattedCounterArrayW(counter, PDH_FMT_DOUBLE,
                 &bytes, &items, values);
             if (status != ERROR_SUCCESS)
-                return PdhFail(L"CPU 카운터 값을 읽지 못했습니다", status);
+                return FailPdh(L"CPU 카운터 값을 읽지 못했습니다", status);
 
             for (const auto& item : std::span(values, items))
             {
@@ -134,9 +124,9 @@ namespace gameoptimizer::engine
 
         [[nodiscard]] Result<CounterSample> ReadProcessorCountersImpl(
             std::chrono::milliseconds interval, std::optional<int> sampleLimit,
-            Clock::time_point deadline, std::stop_token token,
+            tuning::Clock::time_point deadline, std::stop_token token,
             const std::atomic<bool>& stop, HANDLE monitoredProcess,
-            CounterWindowCallback windowCallback, void* callbackContext)
+            const CounterWindowCallback& windowCallback)
         {
             const DWORD processorCount = GetActiveProcessorCount(0);
             if (processorCount == 0)
@@ -146,13 +136,12 @@ namespace gameoptimizer::engine
                 return FailText(L"CPU 측정 간격 또는 표본 수가 올바르지 않습니다.");
             if (StopRequested(token, stop)) return Cancelled();
             if (!TargetAlive(monitoredProcess))
-                return std::unexpected(EngineError{
-                    L"측정 시작 전에 대상 게임이 종료되었습니다.", ERROR_PROCESS_ABORTED });
+                return TargetExited(L"측정 시작 전에 대상 게임이 종료되었습니다.");
 
             PDH_HQUERY rawQuery = nullptr;
             if (const PDH_STATUS status = PdhOpenQueryW(nullptr, 0, &rawQuery);
                 status != ERROR_SUCCESS)
-                return PdhFail(L"CPU 카운터 측정을 시작하지 못했습니다", status);
+                return FailPdh(L"CPU 카운터 측정을 시작하지 못했습니다", status);
             const UniquePdhQuery query(rawQuery);
 
             std::array<PDH_HCOUNTER, CounterPaths.size()> counters{};
@@ -161,13 +150,13 @@ namespace gameoptimizer::engine
                 if (const PDH_STATUS status = PdhAddEnglishCounterW(
                     query.get(), CounterPaths[index], 0, &counters[index]);
                     status != ERROR_SUCCESS)
-                    return PdhFail(L"CPU 카운터를 추가하지 못했습니다", status);
+                    return FailPdh(L"CPU 카운터를 추가하지 못했습니다", status);
             }
 
             if (const PDH_STATUS status = PdhCollectQueryData(query.get());
                 status != ERROR_SUCCESS)
-                return PdhFail(L"CPU 카운터 기준값을 수집하지 못했습니다", status);
-            if (windowCallback) windowCallback(callbackContext, true);
+                return FailPdh(L"CPU 카운터 기준값을 수집하지 못했습니다", status);
+            if (windowCallback) windowCallback(true);
 
             std::array<Accumulator, CounterPaths.size()> accumulators;
             for (Accumulator& accumulator : accumulators)
@@ -176,7 +165,7 @@ namespace gameoptimizer::engine
                 accumulator.Count.assign(processorCount, 0);
             }
 
-            auto nextSampleAt = Clock::now() + interval;
+            auto nextSampleAt = tuning::Clock::now() + interval;
             int collected = 0;
             while ((!sampleLimit || collected < *sampleLimit) && nextSampleAt <= deadline)
             {
@@ -185,10 +174,10 @@ namespace gameoptimizer::engine
 
                 if (const PDH_STATUS status = PdhCollectQueryData(query.get());
                     status != ERROR_SUCCESS)
-                    return PdhFail(L"CPU 카운터 표본을 수집하지 못했습니다", status);
+                    return FailPdh(L"CPU 카운터 표본을 수집하지 못했습니다", status);
                 ++collected;
                 if (sampleLimit && collected == *sampleLimit && windowCallback)
-                    windowCallback(callbackContext, false);
+                    windowCallback(false);
 
                 for (std::size_t index = 0; index < counters.size(); ++index)
                     if (const auto added = Accumulate(counters[index], accumulators[index]); !added)
@@ -216,10 +205,10 @@ namespace gameoptimizer::engine
 
     Result<CounterSample> ReadProcessorCounters(std::chrono::milliseconds interval,
         int samples, const std::atomic<bool>& stop, HANDLE monitoredProcess,
-        CounterWindowCallback windowCallback, void* callbackContext)
+        CounterWindowCallback windowCallback)
     {
-        return ReadProcessorCountersImpl(interval, samples, Clock::time_point::max(), {},
-            stop, monitoredProcess, windowCallback, callbackContext);
+        return ReadProcessorCountersImpl(interval, samples, tuning::Clock::time_point::max(), {},
+            stop, monitoredProcess, windowCallback);
     }
 
     Result<CounterSample> ReadProcessorCountersUntil(std::chrono::milliseconds interval,
@@ -227,6 +216,6 @@ namespace gameoptimizer::engine
         const std::atomic<bool>& stop, HANDLE monitoredProcess)
     {
         return ReadProcessorCountersImpl(interval, std::nullopt, deadline, token,
-            stop, monitoredProcess, nullptr, nullptr);
+            stop, monitoredProcess, {});
     }
 }

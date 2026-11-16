@@ -1,4 +1,5 @@
 #include "CoreSpeedProbe.h"
+#include "TuningConfig.h"
 
 #include <algorithm>
 #include <bit>
@@ -11,11 +12,6 @@ namespace gameoptimizer::engine
 {
     namespace
     {
-        using namespace std::chrono_literals;
-
-        constexpr auto WarmupTime = 20ms;
-        constexpr auto MeasureTime = 80ms;
-        constexpr auto RestTime = 50ms;
         constexpr int BatchSize = 1024;
 
         [[nodiscard]] bool StopRequested(std::stop_token token,
@@ -30,12 +26,12 @@ namespace gameoptimizer::engine
             return static_cast<std::uint32_t>(std::countr_zero(mask));
         }
 
-        [[nodiscard]] Result<std::uint64_t> SpinUntil(Clock::time_point deadline,
+        [[nodiscard]] Result<std::uint64_t> SpinUntil(tuning::Clock::time_point deadline,
             std::uint64_t& state, std::stop_token token,
             const std::atomic<bool>& sessionStop)
         {
             std::uint64_t iterations = 0;
-            while (Clock::now() < deadline)
+            while (tuning::Clock::now() < deadline)
             {
                 for (int index = 0; index < BatchSize; ++index)
                 {
@@ -55,12 +51,13 @@ namespace gameoptimizer::engine
             const std::atomic<bool>& sessionStop)
         {
             std::uint64_t state = 0x9E3779B97F4A7C15ULL;
-            auto warmup = SpinUntil(Clock::now() + WarmupTime, state, token, sessionStop);
+            auto warmup = SpinUntil(tuning::Clock::now() + tuning::ProbeWarmup,
+                state, token, sessionStop);
             if (!warmup) return std::unexpected(warmup.error());
 
-            const auto start = Clock::now();
-            auto measured = SpinUntil(start + MeasureTime, state, token, sessionStop);
-            const auto end = Clock::now();
+            const auto start = tuning::Clock::now();
+            auto measured = SpinUntil(start + tuning::ProbeMeasurement, state, token, sessionStop);
+            const auto end = tuning::Clock::now();
             if (!measured) return std::unexpected(measured.error());
 
             sink.fetch_add(state, std::memory_order_relaxed);
@@ -74,7 +71,7 @@ namespace gameoptimizer::engine
 
     Result<std::vector<SpeedSamples>> ProbeCoreSpeeds(
         std::span<const PhysicalCore> cores, KAFFINITY probeMask,
-        Clock::time_point deadline, std::stop_token token,
+        std::chrono::steady_clock::time_point deadline, std::stop_token token,
         const std::atomic<bool>& sessionStop)
     {
         const auto measurable = [probeMask](const PhysicalCore& core)
@@ -90,7 +87,7 @@ namespace gameoptimizer::engine
         const std::size_t count = cores.size();
 
         for (std::size_t slot = 0;
-            Clock::now() + WarmupTime + MeasureTime <= deadline; ++slot)
+            tuning::Clock::now() + tuning::ProbeWarmup + tuning::ProbeMeasurement <= deadline; ++slot)
         {
             if (StopRequested(token, sessionStop)) return Cancelled();
 
@@ -114,8 +111,8 @@ namespace gameoptimizer::engine
             results[position].Values.push_back({ .Lp = lp, .IterationsPerMs = *value });
             results[position].Best = std::max(results[position].Best, *value);
 
-            if (round > 0 && Clock::now() + RestTime <= deadline)
-                std::this_thread::sleep_for(RestTime);
+            if (round > 0 && tuning::Clock::now() + tuning::ProbeRest <= deadline)
+                std::this_thread::sleep_for(tuning::ProbeRest);
         }
 
         for (std::size_t position = 0; position < cores.size(); ++position)

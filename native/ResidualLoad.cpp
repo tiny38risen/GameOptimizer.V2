@@ -1,4 +1,5 @@
 #include "ResidualLoad.h"
+#include "TuningConfig.h"
 
 #include <algorithm>
 #include <bit>
@@ -9,8 +10,6 @@ namespace gameoptimizer::engine
 {
     namespace
     {
-        using namespace std::chrono_literals;
-
         struct ThreadTimes
         {
             std::uint64_t Creation = 0;
@@ -40,9 +39,8 @@ namespace gameoptimizer::engine
             return process && WaitForSingleObject(process, 0) == WAIT_TIMEOUT;
         }
 
-        void CaptureThreadWindow(void* context, bool starting) noexcept
+        void CaptureThreadWindow(ThreadWindow& window, bool starting) noexcept
         {
-            auto& window = *static_cast<ThreadWindow*>(context);
             const auto beforeRead = std::chrono::steady_clock::now();
             const auto times = ReadThreadTimes(window.Thread);
             const auto afterRead = std::chrono::steady_clock::now();
@@ -69,8 +67,7 @@ namespace gameoptimizer::engine
             return FailText(L"잔여 부하 측정 대상이 올바르지 않습니다.");
         if (stop.load()) return Cancelled();
         if (!ProcessAlive(gameProcess))
-            return std::unexpected(EngineError{
-                L"잔여 부하 측정 전에 대상 게임이 종료되었습니다.", ERROR_PROCESS_ABORTED });
+            return TargetExited(L"잔여 부하 측정 전에 대상 게임이 종료되었습니다.");
 
         const UniqueHandle thread(OpenThread(
             THREAD_QUERY_INFORMATION | SYNCHRONIZE, FALSE, dominantThread.ThreadId));
@@ -89,17 +86,16 @@ namespace gameoptimizer::engine
             return FailText(L"지배 스레드 신원을 확인하지 못했습니다.");
 
         ThreadWindow window{ .Thread = thread.Get() };
-        auto counters = ReadProcessorCounters(500ms, 6, stop, gameProcess,
-            CaptureThreadWindow, &window);
+        auto counters = ReadProcessorCounters(tuning::ResidualSampleInterval,
+            tuning::ResidualSampleCount, stop, gameProcess,
+            [&window](bool starting) noexcept { CaptureThreadWindow(window, starting); });
         if (!counters) return std::unexpected(counters.error());
         if (stop.load()) return Cancelled();
 
         if (!window.Start || !window.End)
             return FailText(L"지배 스레드 측정 구간을 읽지 못했습니다.");
         if (WaitForSingleObject(thread.Get(), 0) != WAIT_TIMEOUT || !ProcessAlive(gameProcess))
-            return std::unexpected(EngineError{
-                L"잔여 부하 측정 중 게임 또는 지배 스레드가 종료되었습니다.",
-                ERROR_PROCESS_ABORTED });
+            return TargetExited(L"잔여 부하 측정 중 게임 또는 지배 스레드가 종료되었습니다.");
         if (window.Start->Creation != dominantThread.CreationFileTime ||
             window.End->Creation != dominantThread.CreationFileTime ||
             window.End->Busy < window.Start->Busy)
