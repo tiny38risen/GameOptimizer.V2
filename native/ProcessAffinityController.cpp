@@ -1,15 +1,11 @@
 #include "ProcessAffinityController.h"
 #include "RecoveryJournal.h"
 
-#include <Pdh.h>
-#include <PdhMsg.h>
 #include <TlHelp32.h>
 
 #include <algorithm>
-#include <bit>
 #include <cstddef>
 #include <cstdint>
-#include <cwchar>
 #include <iterator>
 #include <vector>
 
@@ -58,20 +54,6 @@ namespace gameoptimizer::engine
                 FALSE, processId));
         }
 
-        const GROUP_AFFINITY* FindCoreGroupMask(
-            const SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX& information) noexcept // 물리 코어의 프로세서 그룹 마스크 조회
-        {
-            if (information.Relationship != RelationProcessorCore)
-                return nullptr;
-
-            for (WORD index = 0; index < information.Processor.GroupCount; ++index)
-            {
-                if (information.Processor.GroupMask[index].Group == 0)
-                    return &information.Processor.GroupMask[index];
-            }
-            return nullptr;
-        }
-
         bool SameProcessIdentity(HANDLE process, DWORD processId,
             std::uint64_t expectedCreationTime) noexcept // 저장 프로세스의 PID·생성 시각 확인
         {
@@ -97,372 +79,6 @@ namespace gameoptimizer::engine
                 FileTimeValue(creation) == expectedCreationTime;
         }
 
-        struct PdhQueryHandle
-        {
-            PDH_HQUERY Value = nullptr;
-            ~PdhQueryHandle() { if (Value) PdhCloseQuery(Value); }
-        };
-
-        bool ReadLogicalProcessorUsage(std::vector<double>& usage, std::wstring& error) // 논리 프로세서별 평균 사용률 표본
-        {
-            const DWORD processorCount = GetMaximumProcessorCount(0);
-            if (processorCount == 0)
-            {
-                error = L"논리 프로세서 수를 읽지 못했습니다.";
-                return false;
-            }
-
-            PdhQueryHandle query;
-            PDH_HCOUNTER counter = nullptr;
-            PDH_STATUS status = PdhOpenQueryW(nullptr, 0, &query.Value);
-            if (status != ERROR_SUCCESS)
-            {
-                error = L"CPU 사용률 측정을 시작하지 못했습니다 (PDH " + std::to_wstring(status) + L").";
-                return false;
-            }
-
-            status = PdhAddEnglishCounterW(query.Value,
-                L"\\Processor Information(*)\\% Processor Time", 0, &counter);
-            if (status != ERROR_SUCCESS || PdhCollectQueryData(query.Value) != ERROR_SUCCESS)
-            {
-                error = L"논리 프로세서 사용률 카운터를 읽지 못했습니다 (PDH " + std::to_wstring(status) + L").";
-                return false;
-            }
-
-            constexpr DWORD SampleIntervalMilliseconds = 500;
-            constexpr std::size_t SampleCount = 6;
-            std::vector<double> totals(processorCount, 0.0);
-            std::vector<unsigned int> counts(processorCount, 0);
-
-            for (std::size_t sample = 0; sample < SampleCount; ++sample)
-            {
-                Sleep(SampleIntervalMilliseconds);
-                status = PdhCollectQueryData(query.Value);
-                if (status != ERROR_SUCCESS)
-                {
-                    error = L"CPU 사용률 표본을 수집하지 못했습니다 (PDH " + std::to_wstring(status) + L").";
-                    return false;
-                }
-
-                DWORD bufferSize = 0;
-                DWORD itemCount = 0;
-                status = PdhGetFormattedCounterArrayW(counter, PDH_FMT_DOUBLE,
-                    &bufferSize, &itemCount, nullptr);
-                if (status != PDH_MORE_DATA || bufferSize == 0)
-                {
-                    error = L"논리 프로세서별 CPU 사용률 목록을 읽지 못했습니다 (PDH " + std::to_wstring(status) + L").";
-                    return false;
-                }
-
-                std::vector<std::byte> buffer(bufferSize);
-                auto* items = reinterpret_cast<PPDH_FMT_COUNTERVALUE_ITEM_W>(buffer.data());
-                status = PdhGetFormattedCounterArrayW(counter, PDH_FMT_DOUBLE,
-                    &bufferSize, &itemCount, items);
-                if (status != ERROR_SUCCESS)
-                {
-                    error = L"논리 프로세서별 CPU 사용률 값을 읽지 못했습니다 (PDH " + std::to_wstring(status) + L").";
-                    return false;
-                }
-
-                for (DWORD index = 0; index < itemCount; ++index)
-                {
-                    unsigned int group = 0;
-                    unsigned int processor = 0;
-                    if (items[index].FmtValue.CStatus != PDH_CSTATUS_VALID_DATA &&
-                        items[index].FmtValue.CStatus != PDH_CSTATUS_NEW_DATA)
-                        continue;
-                    if (swscanf_s(items[index].szName, L"%u,%u", &group, &processor) != 2 ||
-                        group != 0 || processor >= processorCount)
-                        continue;
-
-                    const double value = items[index].FmtValue.doubleValue;
-                    if (value < 0.0 || value > 100.0) continue;
-                    totals[processor] += value;
-                    ++counts[processor];
-                }
-            }
-
-            usage.assign(processorCount, -1.0);
-            for (DWORD processor = 0; processor < processorCount; ++processor)
-            {
-                if (counts[processor] != 0)
-                    usage[processor] = totals[processor] / counts[processor];
-            }
-            return true;
-        }
-
-        std::vector<int> ReadEfficiencyClasses(DWORD processorCount) // 논리 CPU별 Windows 효율 등급 조회
-        {
-            ULONG requiredSize = 0;
-            if (GetSystemCpuSetInformation(nullptr, 0, &requiredSize, nullptr, 0) ||
-                GetLastError() != ERROR_INSUFFICIENT_BUFFER || requiredSize == 0)
-                return {};
-
-            std::vector<std::byte> buffer(requiredSize);
-            if (!GetSystemCpuSetInformation(
-                reinterpret_cast<PSYSTEM_CPU_SET_INFORMATION>(buffer.data()),
-                requiredSize, &requiredSize, nullptr, 0))
-                return {};
-
-            std::vector<int> classes(processorCount, -1);
-            std::size_t offset = 0;
-            while (offset < requiredSize)
-            {
-                if (requiredSize - offset < sizeof(SYSTEM_CPU_SET_INFORMATION))
-                    return {};
-
-                const auto* information = reinterpret_cast<const SYSTEM_CPU_SET_INFORMATION*>(
-                    buffer.data() + offset);
-                if (information->Size < sizeof(SYSTEM_CPU_SET_INFORMATION) ||
-                    information->Size > requiredSize - offset)
-                    return {};
-
-                if (information->Type == CpuSetInformation &&
-                    information->CpuSet.Group == 0 &&
-                    information->CpuSet.LogicalProcessorIndex < processorCount)
-                {
-                    classes[information->CpuSet.LogicalProcessorIndex] =
-                        information->CpuSet.EfficiencyClass;
-                }
-
-                offset += information->Size;
-            }
-            return classes;
-        }
-    }
-
-    std::optional<std::vector<CpuCoreCandidate>> FindCpuCoreCandidates(
-        HANDLE gameProcess, std::wstring& error) // 사용률 상위 절반 제외 후보 조회
-    {
-        if (GetActiveProcessorGroupCount() != 1)
-        {
-            error = L"이 PC의 CPU 그룹 구성을 자동 분석할 수 없습니다.";
-            return std::nullopt;
-        }
-
-        KAFFINITY gameMask = 0;
-        KAFFINITY systemMask = 0;
-        if (!GetProcessAffinityMask(gameProcess, &gameMask, &systemMask))
-        {
-            error = ErrorMessage(L"CPU 목록을 읽지 못했습니다");
-            return std::nullopt;
-        }
-
-        DWORD bufferSize = 0;
-        GetLogicalProcessorInformationEx(RelationProcessorCore, nullptr, &bufferSize);
-        if (GetLastError() != ERROR_INSUFFICIENT_BUFFER || bufferSize == 0)
-        {
-            error = ErrorMessage(L"물리 코어 구성을 읽지 못했습니다");
-            return std::nullopt;
-        }
-
-        std::vector<std::byte> buffer(bufferSize);
-        if (!GetLogicalProcessorInformationEx(RelationProcessorCore,
-            reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(buffer.data()),
-            &bufferSize))
-        {
-            error = ErrorMessage(L"물리 코어 구성을 읽지 못했습니다");
-            return std::nullopt;
-        }
-
-        std::vector<double> processorUsage;
-        if (!ReadLogicalProcessorUsage(processorUsage, error))
-            return std::nullopt;
-        const std::vector<int> efficiencyClasses = ReadEfficiencyClasses(
-            static_cast<DWORD>(processorUsage.size()));
-
-        std::vector<CpuCoreCandidate> candidates;
-        std::uint32_t physicalCoreIndex = 0;
-        std::size_t offset = 0;
-        constexpr std::size_t coreGroupMaskOffset =
-            offsetof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX, Processor.GroupMask);
-        while (offset < bufferSize)
-        {
-            if (bufferSize - offset < coreGroupMaskOffset)
-            {
-                error = L"물리 코어 구성 데이터가 올바르지 않습니다.";
-                return std::nullopt;
-            }
-
-            const auto* information = reinterpret_cast<const SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX*>(
-                buffer.data() + offset);
-            const std::size_t recordSize = information->Size;
-            if (information->Relationship != RelationProcessorCore ||
-                recordSize < coreGroupMaskOffset || recordSize > bufferSize - offset)
-            {
-                error = L"물리 코어 구성 데이터가 올바르지 않습니다.";
-                return std::nullopt;
-            }
-
-            const std::size_t groupCount = information->Processor.GroupCount;
-            if (groupCount == 0 ||
-                groupCount > (recordSize - coreGroupMaskOffset) / sizeof(GROUP_AFFINITY))
-            {
-                error = L"물리 코어 구성 데이터가 올바르지 않습니다.";
-                return std::nullopt;
-            }
-
-            const std::uint32_t coreIndex = physicalCoreIndex++;
-            if (const GROUP_AFFINITY* groupMask = FindCoreGroupMask(*information))
-            {
-                const KAFFINITY availableToGame = groupMask->Mask & gameMask;
-                const KAFFINITY availableToSystem = groupMask->Mask & systemMask;
-                if (availableToGame == 0 || availableToSystem == 0)
-                {
-                    offset += recordSize;
-                    continue;
-                }
-
-                double peakUsage = 0.0;
-                bool hasPeakUsage = false;
-                int highestEfficiencyClass = -1;
-                for (int bit = 0; bit < static_cast<int>(sizeof(KAFFINITY) * 8); ++bit)
-                {
-                    const KAFFINITY candidate = static_cast<KAFFINITY>(1) << bit;
-                    if ((availableToSystem & candidate) != 0)
-                    {
-                        if (static_cast<std::size_t>(bit) >= processorUsage.size() ||
-                            processorUsage[bit] < 0.0)
-                        {
-                            error = L"일부 논리 프로세서의 사용률 표본이 비어 있습니다.";
-                            return std::nullopt;
-                        }
-                        if (!hasPeakUsage || processorUsage[bit] > peakUsage)
-                        {
-                            peakUsage = processorUsage[bit];
-                            hasPeakUsage = true;
-                        }
-                        if (static_cast<std::size_t>(bit) < efficiencyClasses.size())
-                            highestEfficiencyClass = std::max(highestEfficiencyClass,
-                                efficiencyClasses[bit]);
-                    }
-                }
-
-                KAFFINITY selectedProcessor = 0;
-                double selectedUsage = 101.0;
-                for (int bit = 0; bit < static_cast<int>(sizeof(KAFFINITY) * 8); ++bit)
-                {
-                    const KAFFINITY candidate = static_cast<KAFFINITY>(1) << bit;
-                    if ((availableToGame & candidate) != 0)
-                    {
-                        if (static_cast<std::size_t>(bit) >= processorUsage.size() ||
-                            processorUsage[bit] < 0.0)
-                        {
-                            error = L"게임 논리 프로세서의 사용률 표본이 비어 있습니다.";
-                            return std::nullopt;
-                        }
-                        if (processorUsage[bit] >= selectedUsage)
-                            continue;
-                        selectedProcessor = candidate;
-                        selectedUsage = processorUsage[bit];
-                    }
-                }
-
-                if (selectedProcessor != 0)
-                {
-                    CpuCoreCandidate core{};
-                    core.PhysicalCoreIndex = coreIndex;
-                    core.LogicalProcessorIndex = static_cast<std::uint32_t>(std::countr_zero(selectedProcessor));
-                    core.LogicalProcessor.Group = 0;
-                    core.LogicalProcessor.Mask = selectedProcessor;
-                    core.PeakUsagePercent = peakUsage;
-                    core.SelectedUsagePercent = selectedUsage;
-                    if (highestEfficiencyClass >= 0)
-                        core.EfficiencyClass = static_cast<std::uint8_t>(highestEfficiencyClass);
-                    candidates.push_back(core);
-                }
-            }
-
-            offset += recordSize;
-        }
-
-        if (candidates.size() < 2)
-        {
-            error = L"게임에서 사용할 수 있는 물리 코어 후보가 두 곳 미만입니다.";
-            return std::nullopt;
-        }
-
-        std::sort(candidates.begin(), candidates.end(),
-            [](const CpuCoreCandidate& left, const CpuCoreCandidate& right)
-            {
-                if (left.PeakUsagePercent != right.PeakUsagePercent)
-                    return left.PeakUsagePercent < right.PeakUsagePercent;
-                return left.PhysicalCoreIndex < right.PhysicalCoreIndex;
-            });
-
-        const std::size_t candidateCount = (candidates.size() + 1) / 2;
-        if (candidateCount < 2)
-        {
-            error = L"사용률 상위 절반을 제외하면 게임 코어 두 곳을 남길 수 없습니다.";
-            return std::nullopt;
-        }
-        for (std::size_t index = 0; index < candidateCount; ++index)
-            candidates[index].Candidate = true;
-
-        const bool allCandidateClassesAvailable = std::all_of(candidates.begin(), candidates.end(),
-            [](const CpuCoreCandidate& core)
-            {
-                return !core.Candidate || core.EfficiencyClass.has_value();
-            });
-        std::sort(candidates.begin(), candidates.end(),
-            [allCandidateClassesAvailable](const CpuCoreCandidate& left,
-                const CpuCoreCandidate& right)
-            {
-                if (left.Candidate != right.Candidate)
-                    return left.Candidate;
-                if (allCandidateClassesAvailable &&
-                    left.EfficiencyClass != right.EfficiencyClass)
-                    return left.EfficiencyClass > right.EfficiencyClass;
-                if (left.PeakUsagePercent != right.PeakUsagePercent)
-                    return left.PeakUsagePercent < right.PeakUsagePercent;
-                return left.PhysicalCoreIndex < right.PhysicalCoreIndex;
-            });
-
-        error.clear();
-        return candidates;
-    }
-
-    std::optional<CpuPlan> SelectCpuPlan(HANDLE gameProcess, std::wstring& error) // 서로 다른 저사용 물리 코어 2곳 자동 선택
-    {
-        const auto candidates = FindCpuCoreCandidates(gameProcess, error);
-        if (!candidates)
-            return std::nullopt;
-
-        KAFFINITY gameMask = 0;
-        KAFFINITY systemMask = 0;
-        if (!GetProcessAffinityMask(gameProcess, &gameMask, &systemMask))
-        {
-            error = ErrorMessage(L"CPU 목록을 읽지 못했습니다");
-            return std::nullopt;
-        }
-
-        GROUP_AFFINITY dominant{};
-        dominant.Group = 0;
-        const CpuCoreCandidate& dominantCore = (*candidates)[0];
-        const CpuCoreCandidate& workerCore = (*candidates)[1];
-
-        dominant.Mask = dominantCore.LogicalProcessor.Mask;
-
-        GROUP_AFFINITY workers{};
-        workers.Group = 0;
-        workers.Mask = workerCore.LogicalProcessor.Mask;
-
-        CpuPlan plan{};
-        plan.Game.Group = 0;
-        plan.Game.Mask = dominant.Mask | workers.Mask;
-        plan.Dominant = dominant;
-        plan.Workers = workers;
-        plan.DominantCore = dominantCore;
-        plan.WorkerCore = workerCore;
-
-        if (std::popcount(systemMask & ~plan.Game.Mask) == 0)
-        {
-            error = L"게임 전용 CPU 두 곳 외에 사용할 논리 프로세서가 없습니다.";
-            return std::nullopt;
-        }
-
-        error.clear();
-        return plan;
     }
 
     bool ProcessAffinityController::HasPendingRecovery() const noexcept // 프로세스·스레드 affinity 원복 여부 확인
@@ -576,6 +192,13 @@ namespace gameoptimizer::engine
         if (!ValidateTarget(gameProcess, gameProcessId, gameCreationTime, gamePath, message))
             return false;
 
+        if (plan.Reserved.Group != 0 || plan.Game.Group != 0 ||
+            plan.Reserved.Mask == 0 || (plan.Game.Mask & ~plan.Reserved.Mask) != 0)
+        {
+            message = L"CPU 계획의 예약 범위가 올바르지 않습니다.";
+            return false;
+        }
+
         UniqueHandle snapshot(CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0));
         if (!snapshot.IsValid())
         {
@@ -685,11 +308,11 @@ namespace gameoptimizer::engine
                         }
                         else
                         {
+                            const KAFFINITY remainingMask = currentMask & ~plan.Reserved.Mask;
                             const KAFFINITY desiredMask = isGame
                                 ? plan.Game.Mask
-                                : ((currentMask & ~plan.Game.Mask) != 0
-                                    ? (currentMask & ~plan.Game.Mask)
-                                    : (systemMask & ~plan.Game.Mask));
+                                : (remainingMask != 0 ? remainingMask
+                                    : (systemMask & ~plan.Reserved.Mask));
                             if (desiredMask == 0 || (desiredMask & ~systemMask) != 0)
                             {
                                 message = describeProcess(

@@ -48,6 +48,7 @@ extern "C"
         std::uint64_t processCreationFileTime,
         std::uint32_t requirePathVerification,
         const wchar_t* journalPath,
+        const wchar_t* diagnosticsPath, // nullptr이면 진단 로그 생략
         GO_STATUS* startupStatus) noexcept; // PID·생성 시각·경로 검증 및 네이티브 세션 시작
 
     GO_API int GO_CALL go_restore_journal(const wchar_t* journalPath) noexcept;

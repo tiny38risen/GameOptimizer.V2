@@ -15,10 +15,10 @@ namespace gameoptimizer::engine
         std::uint32_t PhysicalCoreIndex = 0;
         std::uint32_t LogicalProcessorIndex = 0;
         GROUP_AFFINITY LogicalProcessor{};
-        double PeakUsagePercent = 0.0;
-        double SelectedUsagePercent = 0.0;
+        std::uint32_t L3Index = 0;
+        double RelativeSpeedPercent = 0.0;
+        double InterruptDpcPercent = 0.0;
         std::optional<std::uint8_t> EfficiencyClass;
-        bool Candidate = false;
     };
 
     struct CpuPlan
@@ -26,13 +26,10 @@ namespace gameoptimizer::engine
         GROUP_AFFINITY Game{};
         GROUP_AFFINITY Dominant{};
         GROUP_AFFINITY Workers{};
+        GROUP_AFFINITY Reserved{};
         CpuCoreCandidate DominantCore{};
         CpuCoreCandidate WorkerCore{};
     };
-
-    std::optional<std::vector<CpuCoreCandidate>> FindCpuCoreCandidates(
-        HANDLE gameProcess, std::wstring& error); // 사용률 상위 절반 제외 후보 조회
-    std::optional<CpuPlan> SelectCpuPlan(HANDLE gameProcess, std::wstring& error); // 게임용 물리 코어 2곳 자동 선택
 
     class ProcessAffinityController
     {

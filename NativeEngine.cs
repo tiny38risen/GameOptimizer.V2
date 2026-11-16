@@ -32,11 +32,13 @@ internal sealed class NativeEngineSession : IDisposable
         string journalPath = RecoveryWatchdog.Start();
         try
         {
+            string? diagnosticsPath = DiagnosticLogFiles.Create(target);
             IntPtr sessionHandle = NativeEngineApi.StartSession(
                 checked((uint)target.ProcessId),
                 checked((ulong)target.ProcessCreationFileTime),
                 target.PathAvailable ? 1U : 0U,
                 journalPath,
+                diagnosticsPath,
                 out status);
             if (sessionHandle != IntPtr.Zero)
                 return new NativeEngineSession(sessionHandle);
@@ -191,6 +193,7 @@ internal static class NativeEngineApi
     internal static extern IntPtr StartSession(
         uint processId, ulong processCreationFileTime, uint requirePathVerification,
         [MarshalAs(UnmanagedType.LPWStr)] string journalPath,
+        [MarshalAs(UnmanagedType.LPWStr)] string? diagnosticsPath,
         out NativeEngineStatus startupStatus); // PID 기반 네이티브 최적화 세션 생성
 
     [DllImport(Library, EntryPoint = "go_restore_journal", ExactSpelling = true,

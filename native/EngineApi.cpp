@@ -1,10 +1,13 @@
 #include "EngineApi.h"
 
 #include "EngineInternals.h"
+#include "CpuPlanner.h"
+#include "DiagnosticLog.h"
 #include "GameDiscovery.h"
 #include "ProcessAffinityController.h"
 #include "ProcessPriority.h"
 #include "RecoveryJournal.h"
+#include "ResidualLoad.h"
 #include "ThreadPolicy.h"
 #include "ThreadTracker.h"
 
@@ -16,11 +19,11 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
-#include <iomanip>
+#include <format>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <sstream>
 #include <string>
 #include <thread>
 #include <utility>
@@ -37,18 +40,19 @@ namespace gameoptimizer::engine
     {
         constexpr auto SampleInterval = std::chrono::milliseconds(900);
         constexpr DWORD AutomaticProcessPriorityClass = HIGH_PRIORITY_CLASS;
+        constexpr double ResidualWarningPercent = 5.0;
 
         std::wstring FormatSelectedCore(const CpuCoreCandidate& core) // 선택 코어·논리 CPU 정보 구성
         {
-            std::wostringstream text;
-            text << L"코어 " << core.PhysicalCoreIndex << L"/LP"
-                 << core.LogicalProcessorIndex << L" ("
-                 << std::fixed << std::setprecision(1) << core.PeakUsagePercent
-                 << L"%/LP " << core.SelectedUsagePercent << L"%";
+            std::wstring text = std::format(
+                L"코어 {}/LP{} (속도 {:.1f}%, 인터럽트+DPC {:.1f}%",
+                core.PhysicalCoreIndex, core.LogicalProcessorIndex,
+                core.RelativeSpeedPercent, core.InterruptDpcPercent);
             if (core.EfficiencyClass)
-                text << L", 효율 " << static_cast<unsigned int>(*core.EfficiencyClass);
-            text << L")";
-            return text.str();
+                std::format_to(std::back_inserter(text), L", 효율 {}",
+                    static_cast<unsigned int>(*core.EfficiencyClass));
+            text += L')';
+            return text;
         }
     }
 
@@ -56,10 +60,10 @@ namespace gameoptimizer::engine
     {
         GO_SESSION_IMPL(UniqueHandle process, DWORD processId,
             std::uint64_t processCreationTime, std::wstring processPath,
-            std::wstring journalPath) // 대상 프로세스·세션 초기값 보관
+            std::wstring journalPath, std::wstring diagnosticsPath) // 대상 프로세스·세션 초기값 보관
             : process_(std::move(process)), processId_(processId),
               processCreationTime_(processCreationTime), processPath_(std::move(processPath)),
-              journalPath_(std::move(journalPath))
+              journalPath_(std::move(journalPath)), diagnostics_(std::move(diagnosticsPath))
         {
             InitializeStatus(status_, true, L"대상 확인 중…");
             status_.ProcessId = processId_;
@@ -156,28 +160,36 @@ namespace gameoptimizer::engine
             std::wstring message = L"중단했고 원래 설정 복구를 확인했습니다.";
             std::wstring partialAffinityWarning;
             std::wstring cpuPlanNote;
+            std::wstring residualNote;
             std::optional<ThreadIdentity> lastCandidate;
+            bool residualChecked = false;
 
             const auto AddAffinityWarning = [&partialAffinityWarning,
-                &cpuPlanNote](std::wstring statusMessage)
+                &cpuPlanNote, &residualNote](std::wstring statusMessage)
             {
                 statusMessage = cpuPlanNote + statusMessage;
                 if (!partialAffinityWarning.empty())
                     statusMessage += L" " + partialAffinityWarning;
+                if (!residualNote.empty())
+                    statusMessage += L" " + residualNote;
                 return statusMessage;
             };
 
             try
             {
-                std::wstring cpuPlanError;
-                cpuPlan_ = SelectCpuPlan(process_.Get(), cpuPlanError);
-                if (!cpuPlan_)
+                diagnostics_.Write(L"target pid={} creation={}",
+                    processId_, processCreationTime_);
+                diagnostics_.Write(L"session path={}", processPath_);
+                auto selectedPlan = SelectCpuPlan(process_.Get(), stopRequested_, diagnostics_);
+                if (selectedPlan)
+                    cpuPlan_ = std::move(*selectedPlan);
+                else if (selectedPlan.error().Code != ERROR_CANCELLED)
                 {
                     passed = false;
-                    message = cpuPlanError;
+                    message = selectedPlan.error().Message;
                 }
 
-                if (passed)
+                if (passed && cpuPlan_)
                 {
                     cpuPlanNote = L"선택 코어: " + FormatSelectedCore(cpuPlan_->DominantCore) +
                         L" · " + FormatSelectedCore(cpuPlan_->WorkerCore) + L". ";
@@ -200,7 +212,7 @@ namespace gameoptimizer::engine
                     }
                 }
 
-                if (passed)
+                if (passed && cpuPlan_)
                 {
                     std::wstring priorityMessage;
                     if (!processPriority_.Apply(process_.Get(), processId_, processCreationTime_,
@@ -217,7 +229,7 @@ namespace gameoptimizer::engine
                     }
                 }
 
-                while (passed && !stopRequested_.load())
+                while (passed && cpuPlan_ && !stopRequested_.load())
                 {
                     std::wstring error;
                     if (!ValidateTarget(process_.Get(), processId_, processCreationTime_, processPath_, error))
@@ -271,10 +283,49 @@ namespace gameoptimizer::engine
                         }
                         lastHandledCandidate_ = observation.Candidate;
 
-                        const std::wstring statusMessage = AddAffinityWarning(HasPendingRecovery()
+                        const std::wstring appliedStatus = HasPendingRecovery()
                             ? L"안정 후보를 확인했고 자동 CPU 설정을 적용했습니다. 중단하면 원복합니다."
-                            : L"안정 후보가 자동 CPU 설정을 사용 중입니다.");
-                        Publish(observation, statusMessage);
+                            : L"안정 후보가 자동 CPU 설정을 사용 중입니다.";
+                        Publish(observation, AddAffinityWarning(appliedStatus));
+
+                        if (!residualChecked)
+                        {
+                            residualChecked = true;
+                            if (const auto residual = MeasureResidualLoad(
+                                *cpuPlan_, observation.Candidate, process_.Get(), stopRequested_))
+                            {
+                                diagnostics_.Write(
+                                    L"residual thread={:.1f}% dominantLp={:.1f}% sibling={}",
+                                    residual->DominantThreadPercent,
+                                    residual->DominantLpResidualPercent,
+                                    residual->SiblingPercent
+                                        ? std::format(L"{:.1f}%", *residual->SiblingPercent)
+                                        : std::wstring(L"none"));
+                                const auto& counters = residual->Counters;
+                                for (std::size_t lp = 0;
+                                    lp < counters.ProcessorTime.size(); ++lp)
+                                    diagnostics_.Write(
+                                        L"residual lp={} busy={:.1f} int={:.1f} dpc={:.1f}",
+                                        lp, counters.ProcessorTime[lp],
+                                        counters.InterruptTime[lp], counters.DpcTime[lp]);
+
+                                const double worst = std::max(
+                                    residual->DominantLpResidualPercent,
+                                    residual->SiblingPercent.value_or(0.0));
+                                if (worst > ResidualWarningPercent)
+                                {
+                                    residualNote = std::format(
+                                        L"지배 코어에 옮길 수 없는 부하 {:.1f}%가 있습니다.", worst);
+                                    Publish(observation, AddAffinityWarning(appliedStatus));
+                                }
+                            }
+                            else if (residual.error().Code != ERROR_CANCELLED)
+                            {
+                                diagnostics_.Write(L"residual check failed: {}",
+                                    residual.error().Message);
+                            }
+                            if (stopRequested_.load()) break;
+                        }
                     }
                     else
                     {
@@ -363,6 +414,7 @@ namespace gameoptimizer::engine
         std::uint64_t processCreationTime_;
         std::wstring processPath_;
         std::wstring journalPath_;
+        DiagnosticLog diagnostics_;
         ThreadCandidateTracker tracker_;
         ProcessAffinityController processAffinity_;
         ProcessPriorityController processPriority_;
@@ -385,9 +437,9 @@ struct GO_SESSION
 {
     GO_SESSION(gameoptimizer::engine::UniqueHandle&& process, DWORD processId,
         std::uint64_t processCreationTime, std::wstring processPath,
-        std::wstring journalPath) // 세션 구현체에 대상 프로세스 정보 전달
+        std::wstring journalPath, std::wstring diagnosticsPath) // 세션 구현체에 대상 프로세스 정보 전달
         : impl(std::move(process), processId, processCreationTime,
-            std::move(processPath), std::move(journalPath))
+            std::move(processPath), std::move(journalPath), std::move(diagnosticsPath))
     {
     }
 
@@ -425,6 +477,7 @@ extern "C" GO_API GO_SESSION* GO_CALL go_start_session(
     std::uint64_t processCreationFileTime,
     std::uint32_t requirePathVerification,
     const wchar_t* journalPath,
+    const wchar_t* diagnosticsPath,
     GO_STATUS* startupStatus) noexcept // PID·생성 시각·경로 검증 및 최적화 세션 생성
 {
     if (!startupStatus || !journalPath || !*journalPath) return nullptr;
@@ -462,7 +515,8 @@ extern "C" GO_API GO_SESSION* GO_CALL go_start_session(
         }
 
         auto session = std::make_unique<GO_SESSION>(std::move(process), processId,
-            processCreationFileTime, path, journalPath);
+            processCreationFileTime, path, journalPath,
+            diagnosticsPath ? std::wstring(diagnosticsPath) : std::wstring{});
         session->impl.Start();
         session->impl.ReadStatus(*startupStatus);
         return session.release();
