@@ -9,6 +9,8 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "GameOptimizer.V2", "GameOpt
 		{3D623E1E-AF10-4EF2-BD0D-82E1CB65201A} = {3D623E1E-AF10-4EF2-BD0D-82E1CB65201A}
 	EndProjectSection
 EndProject
+Project("{BC8A1FFA-BEE3-4634-8014-F334798102B3}") = "GameOptimizer.Launcher", "launcher\GameOptimizer.Launcher.vcxproj", "{C52D1274-4F4C-43E8-B2F8-7D3302780CE2}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -23,5 +25,9 @@ Global
 		{2BA5AF52-090A-43BF-8350-567A72790975}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{2BA5AF52-090A-43BF-8350-567A72790975}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{2BA5AF52-090A-43BF-8350-567A72790975}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C52D1274-4F4C-43E8-B2F8-7D3302780CE2}.Debug|Any CPU.ActiveCfg = Debug|x64
+		{C52D1274-4F4C-43E8-B2F8-7D3302780CE2}.Debug|Any CPU.Build.0 = Debug|x64
+		{C52D1274-4F4C-43E8-B2F8-7D3302780CE2}.Release|Any CPU.ActiveCfg = Release|x64
+		{C52D1274-4F4C-43E8-B2F8-7D3302780CE2}.Release|Any CPU.Build.0 = Release|x64
 	EndGlobalSection
 EndGlobal

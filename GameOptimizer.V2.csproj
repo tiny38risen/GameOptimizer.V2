@@ -1,12 +1,25 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Version>3.0.0-beta1</Version>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <SatelliteResourceLanguages>ko</SatelliteResourceLanguages>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <PlatformTarget>x64</PlatformTarget>
     <Prefer32Bit>false</Prefer32Bit>
+    <ApplicationIcon>assets\GameOptimizer.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
     <DefaultItemExcludesInProjectFolder>$(DefaultItemExcludesInProjectFolder);GamePerformanceRecorder/**</DefaultItemExcludesInProjectFolder>
   </PropertyGroup>
+  <ItemGroup>
+    <Resource Include="assets\GameOptimizer.ico" />
+    <Content Include="bin\$(Configuration)\$(TargetFramework)\GameOptimizer.Engine.dll">
+      <Link>GameOptimizer.Engine.dll</Link>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
 </Project>
