@@ -1,0 +1,34 @@
+name: engine-tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-tests:
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: microsoft/setup-msbuild@v2
+
+      - name: Build native tests
+        shell: pwsh
+        run: >
+          msbuild native/tests/GameOptimizer.Engine.Tests.vcxproj -m
+          -p:Configuration=Release -p:Platform=x64
+          "-p:SolutionDir=$env:GITHUB_WORKSPACE/"
+
+      - name: Run native tests
+        shell: pwsh
+        run: |
+          $tests = Join-Path $env:GITHUB_WORKSPACE 'bin/tests/Release/GameOptimizer.Engine.Tests.exe'
+          $fixtures = Join-Path $env:GITHUB_WORKSPACE 'native/tests/fixtures'
+          if (Test-Path $fixtures) { & $tests $fixtures } else { & $tests }
+          if ($LASTEXITCODE -ne 0) { throw "Native tests failed (exit code $LASTEXITCODE)" }
