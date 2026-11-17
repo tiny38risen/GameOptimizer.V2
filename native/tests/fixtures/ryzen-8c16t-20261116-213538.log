@@ -1,0 +1,27 @@
+2026-11-16T21:35:38.008 game affinity original=0xffff system=0xffff
+2026-11-16T21:35:47.552 core=0 lpMask=0x3 l3=0 l3bytes=16777216 speed=98.85 eff=0
+2026-11-16T21:35:47.552 counter lp=0 processor=48.27 interrupt=1.91 dpc=4.86
+2026-11-16T21:35:47.552 counter lp=1 processor=36.12 interrupt=0.17 dpc=0.00
+2026-11-16T21:35:47.552 core=1 lpMask=0xc l3=0 l3bytes=16777216 speed=100.00 eff=0
+2026-11-16T21:35:47.552 counter lp=2 processor=24.14 interrupt=0.52 dpc=0.17
+2026-11-16T21:35:47.552 counter lp=3 processor=26.05 interrupt=0.87 dpc=0.00
+2026-11-16T21:35:47.552 core=2 lpMask=0x30 l3=0 l3bytes=16777216 speed=99.82 eff=0
+2026-11-16T21:35:47.552 counter lp=4 processor=77.95 interrupt=0.17 dpc=0.35
+2026-11-16T21:35:47.552 counter lp=5 processor=21.54 interrupt=0.35 dpc=0.17
+2026-11-16T21:35:47.552 core=3 lpMask=0xc0 l3=0 l3bytes=16777216 speed=99.06 eff=0
+2026-11-16T21:35:47.552 counter lp=6 processor=17.54 interrupt=0.00 dpc=0.17
+2026-11-16T21:35:47.553 counter lp=7 processor=23.45 interrupt=0.52 dpc=0.00
+2026-11-16T21:35:47.553 core=4 lpMask=0x300 l3=1 l3bytes=16777216 speed=100.00 eff=0
+2026-11-16T21:35:47.553 counter lp=8 processor=14.25 interrupt=0.35 dpc=0.00
+2026-11-16T21:35:47.553 counter lp=9 processor=19.63 interrupt=0.52 dpc=0.00
+2026-11-16T21:35:47.553 core=5 lpMask=0xc00 l3=1 l3bytes=16777216 speed=98.39 eff=0
+2026-11-16T21:35:47.553 counter lp=10 processor=10.78 interrupt=0.00 dpc=0.17
+2026-11-16T21:35:47.553 counter lp=11 processor=11.65 interrupt=0.17 dpc=0.00
+2026-11-16T21:35:47.553 core=6 lpMask=0x3000 l3=1 l3bytes=16777216 speed=98.33 eff=0
+2026-11-16T21:35:47.553 counter lp=12 processor=10.09 interrupt=0.00 dpc=0.00
+2026-11-16T21:35:47.553 counter lp=13 processor=14.09 interrupt=0.17 dpc=0.17
+2026-11-16T21:35:47.553 core=7 lpMask=0xc000 l3=1 l3bytes=16777216 speed=99.42 eff=0
+2026-11-16T21:35:47.553 counter lp=14 processor=12.16 interrupt=0.52 dpc=0.00
+2026-11-16T21:35:47.553 counter lp=15 processor=15.12 interrupt=0.35 dpc=0.00
+2026-11-16T21:35:47.553 selection config speedTolerance=1.00 intdpcTolerance=0.50
+2026-11-16T21:35:47.553 dominant core=2 lp=4 speed=99.82% intdpc=0.52% worker core=3 lp=6 speed=99.06% intdpc=0.17% game=0x50 reserved=0x70

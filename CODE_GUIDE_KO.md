@@ -218,7 +218,8 @@ ABI를 바꿀 때 규칙:
 - 지원 범위: Windows 10 이상, 단일 CPU 그룹, 논리 프로세서 64개 이하.
 - 시작 후 약 9.5초 측정하고, 첫 스레드 배치 뒤 약 3초 사후 확인을 한다. 속도 프로브는 측정 중 코어 하나씩을 잠깐 사용하므로 게임이 짧게 끊길 수 있다.
 - 속도 프로브는 정수 연산 처리량으로 코어를 상대 비교한다. 실제 게임 부하에서의 성능 수치가 아니다.
-- 실기 검증은 Ryzen 8코어 16스레드(L3 2묶음) 한 대에서만 했다. 인텔 하이브리드, 단일 L3, SMT 없는 CPU는 아직 실측하지 않았다.
+- 실기 검증은 Ryzen 8코어 16스레드(L3 2묶음)와 Pentium G4560(2코어 4스레드, 단일 L3) 두 대에서 했다. 인텔 하이브리드와 SMT 없는 CPU는 아직 실측하지 않았다.
+- 물리 코어가 2개인 PC에서는 다른 프로그램용 LP가 1개만 남는다. G4560 21회 실행 중 1회는 그 LP가 포화되어 지배 LP까지 부하가 넘쳤다(지배 스레드 91.3%).
 
 ## 11. 코드 위치
 
@@ -266,11 +267,19 @@ msbuild .\GameOptimizer.V2.sln -m -p:Configuration=Release
 ### 12.2 테스트
 ```powershell
 msbuild .\native\tests\GameOptimizer.Engine.Tests.vcxproj -p:Configuration=Release -p:Platform=x64 "-p:SolutionDir=$PWD/"
-.\bin\tests\Release\GameOptimizer.Engine.Tests.exe
+.\bin\tests\Release\GameOptimizer.Engine.Tests.exe .\native\tests\fixtures
 ```
-종료 코드 0이면 통과다. GitHub Actions(`engine-tests`)가 push와 PR마다 같은 테스트를 Windows에서 실행한다. `native/tests/fixtures/` 폴더가 있으면 그 경로를 테스트 실행 파일의 인자로 넘긴다.
+종료 코드 0이면 통과다. GitHub Actions(`engine-tests`)가 push와 PR마다 엔진 DLL을 빌드하고, 같은 테스트를 Windows에서 실행한다.
 
-현재 테스트 범위는 `EngineResult`뿐이다. 선정 규칙(`CoreSelection`)은 실측 로그 기반 테스트를 추가할 예정이다.
+| 테스트 | 파일 | 내용 |
+|---|---|---|
+| 오류 모델 | `EngineResultTests.cpp` | Win32/PDH 오류 코드 보존, 취소 구분 |
+| 선정 규칙 | `CoreSelectionTests.cpp` | L3 사전 필터, 같은 L3 보조 코어, 속도 허용 오차, LP 선택, 남는 LP 없음, 잘못된 입력 |
+| 실측 재현 | `native/tests/fixtures/*.log` | 실제 진단 로그의 선정 입력을 `SelectCores`에 다시 넣어 로그에 남은 결과와 같은지 확인 |
+
+fixture는 진단 로그에서 `game affinity`, `core=`, `counter lp=`, `selection config`, `dominant core=` 줄만 남긴 파일이다. 새 PC에서 받은 로그도 같은 방식으로 줄여 넣으면 회귀 테스트가 된다. 폴더를 넘겼는데 `.log`가 하나도 없으면 실패로 처리한다.
+
+선정 입력(속도, 인터럽트, DPC, 허용 오차)은 왕복 정밀도로 기록한다. 예전 로그는 소수 둘째 자리까지만 남아서, 허용 오차 경계에 걸린 실행 1건(G4560 14:26:22, 코어 인터럽트+DPC 합 0.50 대 0.00)은 재현할 수 없어 fixture에서 뺐다.
 
 ### 12.3 배포 패키지
 ```powershell

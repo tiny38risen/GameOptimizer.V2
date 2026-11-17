@@ -1,0 +1,27 @@
+2026-11-16T17:12:14.647 game affinity original=0xffff system=0xffff
+2026-11-16T17:12:24.094 core=0 lpMask=0x3 l3=0 l3bytes=16777216 speed=99.57 eff=0
+2026-11-16T17:12:24.094 counter lp=0 processor=41.85 interrupt=4.86 dpc=6.94
+2026-11-16T17:12:24.094 counter lp=1 processor=46.71 interrupt=1.21 dpc=1.73
+2026-11-16T17:12:24.094 core=1 lpMask=0xc l3=0 l3bytes=16777216 speed=99.99 eff=0
+2026-11-16T17:12:24.094 counter lp=2 processor=28.31 interrupt=0.52 dpc=0.17
+2026-11-16T17:12:24.094 counter lp=3 processor=26.23 interrupt=0.69 dpc=0.00
+2026-11-16T17:12:24.094 core=2 lpMask=0x30 l3=0 l3bytes=16777216 speed=100.00 eff=0
+2026-11-16T17:12:24.094 counter lp=4 processor=69.28 interrupt=0.35 dpc=0.35
+2026-11-16T17:12:24.094 counter lp=5 processor=26.23 interrupt=0.17 dpc=0.00
+2026-11-16T17:12:24.094 core=3 lpMask=0xc0 l3=0 l3bytes=16777216 speed=99.19 eff=0
+2026-11-16T17:12:24.094 counter lp=6 processor=19.11 interrupt=0.17 dpc=0.00
+2026-11-16T17:12:24.094 counter lp=7 processor=18.60 interrupt=0.17 dpc=0.00
+2026-11-16T17:12:24.094 core=4 lpMask=0x300 l3=1 l3bytes=16777216 speed=100.00 eff=0
+2026-11-16T17:12:24.094 counter lp=8 processor=16.16 interrupt=0.35 dpc=0.00
+2026-11-16T17:12:24.094 counter lp=9 processor=17.04 interrupt=1.04 dpc=0.00
+2026-11-16T17:12:24.094 core=5 lpMask=0xc00 l3=1 l3bytes=16777216 speed=98.59 eff=0
+2026-11-16T17:12:24.094 counter lp=10 processor=11.48 interrupt=0.69 dpc=0.00
+2026-11-16T17:12:24.094 counter lp=11 processor=9.92 interrupt=0.17 dpc=0.17
+2026-11-16T17:12:24.094 core=6 lpMask=0x3000 l3=1 l3bytes=16777216 speed=98.61 eff=0
+2026-11-16T17:12:24.094 counter lp=12 processor=12.18 interrupt=0.35 dpc=0.17
+2026-11-16T17:12:24.094 counter lp=13 processor=12.69 interrupt=0.17 dpc=0.00
+2026-11-16T17:12:24.094 core=7 lpMask=0xc000 l3=1 l3bytes=16777216 speed=99.36 eff=0
+2026-11-16T17:12:24.094 counter lp=14 processor=13.22 interrupt=0.17 dpc=0.17
+2026-11-16T17:12:24.094 counter lp=15 processor=8.88 interrupt=0.35 dpc=0.17
+2026-11-16T17:12:24.096 selection config speedTolerance=1.00 intdpcTolerance=0.50
+2026-11-16T17:12:24.096 dominant core=3 lp=6 speed=99.19% intdpc=0.17% worker core=2 lp=5 speed=100.00% intdpc=0.17% game=0x60 reserved=0xe0

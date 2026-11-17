@@ -124,13 +124,14 @@ namespace gameoptimizer::engine
             };
             for (const auto& core : cores)
             {
-                log.Write(L"core={} lpMask={:#x} l3={} l3bytes={} speed={:.2f} eff={}",
+                // Selection inputs use round-trip precision so a log can be replayed exactly.
+                log.Write(L"core={} lpMask={:#x} l3={} l3bytes={} speed={} eff={}",
                     core.Core.Index, core.Core.LogicalMask, core.Core.L3Index, core.Core.L3SizeBytes,
                     core.RelativeSpeedPercent,
                     core.Core.EfficiencyClass
                         ? static_cast<int>(*core.Core.EfficiencyClass) : -1);
                 for (const auto& lp : core.Lps)
-                    log.Write(L"counter lp={} processor={:.2f} interrupt={:.2f} dpc={:.2f}",
+                    log.Write(L"counter lp={} processor={:.2f} interrupt={} dpc={}",
                         lp.Index, read(counters.ProcessorTime, lp.Index),
                         read(counters.InterruptTime, lp.Index),
                         read(counters.DpcTime, lp.Index));
@@ -216,7 +217,7 @@ namespace gameoptimizer::engine
         LogSpeedSamples(log, *topology, *speeds);
         const auto cores = BuildMeasurements(*topology, *counters, *speeds);
         LogMeasurements(log, cores, *counters);
-        log.Write(L"selection config speedTolerance={:.2f} intdpcTolerance={:.2f}",
+        log.Write(L"selection config speedTolerance={} intdpcTolerance={}",
             DefaultSelectionConfig.SpeedTolerancePercent,
             DefaultSelectionConfig.InterruptDpcTolerancePercent);
 

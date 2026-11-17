@@ -18,6 +18,12 @@ jobs:
 
       - uses: microsoft/setup-msbuild@v3
 
+      - name: Build engine
+        shell: pwsh
+        run: >
+          msbuild native/GameOptimizer.Engine.vcxproj -m
+          -p:Configuration=Release -p:Platform=x64
+
       - name: Build native tests
         shell: pwsh
         run: >

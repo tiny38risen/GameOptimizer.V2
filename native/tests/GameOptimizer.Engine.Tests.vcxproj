@@ -77,9 +77,14 @@
     <ClInclude Include="..\EngineResult.h" />
     <ClInclude Include="..\EngineInternals.h" />
     <ClInclude Include="..\EngineApi.h" />
+    <ClInclude Include="..\CoreSelection.h" />
+    <ClInclude Include="TestSupport.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="TestMain.cpp" />
     <ClCompile Include="EngineResultTests.cpp" />
+    <ClCompile Include="CoreSelectionTests.cpp" />
+    <ClCompile Include="..\CoreSelection.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

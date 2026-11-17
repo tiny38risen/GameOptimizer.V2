@@ -1,0 +1,9 @@
+2026-11-17T14:25:26.728 game affinity original=0xf system=0xf
+2026-11-17T14:25:36.268 core=0 lpMask=0x3 l3=0 l3bytes=3145728 speed=100.00 eff=0
+2026-11-17T14:25:36.268 counter lp=0 processor=36.93 interrupt=0.17 dpc=0.00
+2026-11-17T14:25:36.268 counter lp=1 processor=41.58 interrupt=0.00 dpc=0.00
+2026-11-17T14:25:36.268 core=1 lpMask=0xc l3=0 l3bytes=3145728 speed=99.41 eff=0
+2026-11-17T14:25:36.268 counter lp=2 processor=51.80 interrupt=0.00 dpc=0.00
+2026-11-17T14:25:36.268 counter lp=3 processor=44.59 interrupt=0.00 dpc=0.00
+2026-11-17T14:25:36.268 selection config speedTolerance=1.00 intdpcTolerance=0.50
+2026-11-17T14:25:36.268 dominant core=0 lp=0 speed=100.00% intdpc=0.17% worker core=1 lp=2 speed=99.41% intdpc=0.00% game=0x5 reserved=0x7
