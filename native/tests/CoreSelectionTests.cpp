@@ -24,7 +24,7 @@ namespace gameoptimizer::engine::tests
         [[nodiscard]] CoreMeasurement MakeCore(std::uint32_t index, std::uint32_t firstLp,
             std::uint32_t l3, double speed, std::initializer_list<double> interruptDpc)
         {
-            CoreMeasurement core{ .Core = { .Index = index, .L3Index = l3, .EfficiencyClass = 0 },
+            CoreMeasurement core{ .Core = { .Index = index, .L3Index = l3, .EfficiencyClass = std::uint8_t{ 0 } },
                 .RelativeSpeedPercent = speed };
             std::uint32_t lp = firstLp;
             for (const double value : interruptDpc)
