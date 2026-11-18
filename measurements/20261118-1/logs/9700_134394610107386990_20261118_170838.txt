@@ -1,0 +1,79 @@
+2026-11-18T17:08:38.655 target pid=9700 creation=134394610107386990
+2026-11-18T17:08:38.655 session path=C:\Nexon\Mabinogi\Client.exe
+2026-11-18T17:08:38.655 game affinity original=0xf system=0xf
+2026-11-18T17:08:48.145 measure elapsed=9468ms
+2026-11-18T17:08:48.145 speed core=0 best=561024.18
+2026-11-18T17:08:48.145 speed core=0 lp=0 value=526765.27
+2026-11-18T17:08:48.145 speed core=0 lp=1 value=552957.26
+2026-11-18T17:08:48.145 speed core=0 lp=0 value=535476.34
+2026-11-18T17:08:48.145 speed core=0 lp=1 value=546362.64
+2026-11-18T17:08:48.145 speed core=0 lp=0 value=521393.66
+2026-11-18T17:08:48.145 speed core=0 lp=1 value=554937.76
+2026-11-18T17:08:48.145 speed core=0 lp=0 value=537168.34
+2026-11-18T17:08:48.145 speed core=0 lp=1 value=537193.13
+2026-11-18T17:08:48.145 speed core=0 lp=0 value=536155.68
+2026-11-18T17:08:48.145 speed core=0 lp=1 value=556185.89
+2026-11-18T17:08:48.145 speed core=0 lp=0 value=527298.25
+2026-11-18T17:08:48.145 speed core=0 lp=1 value=549918.15
+2026-11-18T17:08:48.145 speed core=0 lp=0 value=537490.88
+2026-11-18T17:08:48.145 speed core=0 lp=1 value=498626.20
+2026-11-18T17:08:48.145 speed core=0 lp=0 value=538061.49
+2026-11-18T17:08:48.145 speed core=0 lp=1 value=411053.03
+2026-11-18T17:08:48.145 speed core=0 lp=0 value=533501.81
+2026-11-18T17:08:48.145 speed core=0 lp=1 value=498751.71
+2026-11-18T17:08:48.145 speed core=0 lp=0 value=547090.76
+2026-11-18T17:08:48.145 speed core=0 lp=1 value=499783.43
+2026-11-18T17:08:48.145 speed core=0 lp=0 value=543644.21
+2026-11-18T17:08:48.145 speed core=0 lp=1 value=499707.63
+2026-11-18T17:08:48.145 speed core=0 lp=0 value=545242.81
+2026-11-18T17:08:48.145 speed core=0 lp=1 value=559902.00
+2026-11-18T17:08:48.145 speed core=0 lp=0 value=544078.72
+2026-11-18T17:08:48.145 speed core=0 lp=1 value=561024.18
+2026-11-18T17:08:48.145 speed core=0 lp=0 value=548458.76
+2026-11-18T17:08:48.145 speed core=0 lp=1 value=498776.68
+2026-11-18T17:08:48.145 speed core=0 lp=0 value=548487.32
+2026-11-18T17:08:48.145 speed core=0 lp=1 value=533534.40
+2026-11-18T17:08:48.145 speed core=1 best=562764.23
+2026-11-18T17:08:48.145 speed core=1 lp=2 value=546658.98
+2026-11-18T17:08:48.145 speed core=1 lp=3 value=550853.91
+2026-11-18T17:08:48.145 speed core=1 lp=2 value=538417.87
+2026-11-18T17:08:48.145 speed core=1 lp=3 value=550107.40
+2026-11-18T17:08:48.145 speed core=1 lp=2 value=538261.56
+2026-11-18T17:08:48.145 speed core=1 lp=3 value=553107.38
+2026-11-18T17:08:48.145 speed core=1 lp=2 value=506049.56
+2026-11-18T17:08:48.145 speed core=1 lp=3 value=541082.23
+2026-11-18T17:08:48.145 speed core=1 lp=2 value=452744.27
+2026-11-18T17:08:48.145 speed core=1 lp=3 value=440329.50
+2026-11-18T17:08:48.145 speed core=1 lp=2 value=498398.92
+2026-11-18T17:08:48.145 speed core=1 lp=3 value=550143.73
+2026-11-18T17:08:48.145 speed core=1 lp=2 value=441492.08
+2026-11-18T17:08:48.145 speed core=1 lp=3 value=556289.67
+2026-11-18T17:08:48.145 speed core=1 lp=2 value=556923.82
+2026-11-18T17:08:48.145 speed core=1 lp=3 value=505058.61
+2026-11-18T17:08:48.145 speed core=1 lp=2 value=556611.76
+2026-11-18T17:08:48.145 speed core=1 lp=3 value=558344.44
+2026-11-18T17:08:48.145 speed core=1 lp=2 value=555110.71
+2026-11-18T17:08:48.145 speed core=1 lp=3 value=554131.37
+2026-11-18T17:08:48.145 speed core=1 lp=2 value=562132.68
+2026-11-18T17:08:48.145 speed core=1 lp=3 value=559396.52
+2026-11-18T17:08:48.145 speed core=1 lp=2 value=557817.03
+2026-11-18T17:08:48.145 speed core=1 lp=3 value=524475.42
+2026-11-18T17:08:48.145 speed core=1 lp=2 value=559523.91
+2026-11-18T17:08:48.145 speed core=1 lp=3 value=558110.03
+2026-11-18T17:08:48.145 speed core=1 lp=2 value=559313.91
+2026-11-18T17:08:48.145 speed core=1 lp=3 value=555951.03
+2026-11-18T17:08:48.145 speed core=1 lp=2 value=562764.23
+2026-11-18T17:08:48.145 speed core=1 lp=3 value=558447.71
+2026-11-18T17:08:48.145 core=0 lpMask=0x3 l3=0 l3bytes=3145728 speed=99.69 eff=0
+2026-11-18T17:08:48.145 counter lp=0 processor=49.23 interrupt=1.73 dpc=1.05
+2026-11-18T17:08:48.145 counter lp=1 processor=44.73 interrupt=0.17 dpc=0.00
+2026-11-18T17:08:48.145 core=1 lpMask=0xc l3=0 l3bytes=3145728 speed=100.00 eff=0
+2026-11-18T17:08:48.145 counter lp=2 processor=56.73 interrupt=0.17 dpc=0.18
+2026-11-18T17:08:48.145 counter lp=3 processor=46.79 interrupt=0.18 dpc=0.17
+2026-11-18T17:08:48.145 selection config speedTolerance=1.00 intdpcTolerance=0.50
+2026-11-18T17:08:48.145 dominant core=1 lp=2 speed=100.00% intdpc=0.35% worker core=0 lp=1 speed=99.69% intdpc=0.17% game=0x6 reserved=0xe
+2026-11-18T17:08:59.785 residual thread=98.5% dominantLp=0.0% sibling=2.6%
+2026-11-18T17:08:59.785 residual lp=0 busy=8.8 int=0.0 dpc=0.5
+2026-11-18T17:08:59.785 residual lp=1 busy=17.1 int=0.0 dpc=0.0
+2026-11-18T17:08:59.785 residual lp=2 busy=98.4 int=0.0 dpc=0.0
+2026-11-18T17:08:59.785 residual lp=3 busy=2.6 int=0.0 dpc=0.0
