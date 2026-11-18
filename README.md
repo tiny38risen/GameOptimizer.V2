@@ -100,3 +100,7 @@ msbuild .\native\tests\GameOptimizer.Engine.Tests.vcxproj -p:Configuration=Relea
 ```
 
 배포 패키지 만드는 법, 코어 선정 규칙, 복구 저널 형식, 튜닝값은 [코드 가이드](CODE_GUIDE_KO.md)에 정리했습니다.
+
+## 설계 결정과 AI 활용
+
+주요 설계 결정 5건의 문제, 선택지, 이유, 실측 결과와 AI를 어떻게 썼는지는 [설계 결정 기록](docs/decisions/README.md)에 있습니다.
