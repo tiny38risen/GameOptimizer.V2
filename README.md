@@ -8,11 +8,15 @@
 |---|---|
 | ![대기 화면](docs/images/screen-ready.png) | ![실행 중 화면](docs/images/screen-running.png) |
 
+## 다운로드
+
+[Releases](https://github.com/tiny38risen/GameOptimizer.V2/releases)에서 zip 파일을 받아 압축을 풀고 `GameOptimizer.exe`를 실행하세요. 설치할 것은 없습니다.
+
 ## 실측 결과
 
-마비노기 클라이언트(D3D9, 2코어 4스레드 PC)에서 적용 전후를 60초씩 번갈아 측정했습니다(PresentMon). 원자료와 분석 스크립트는 [`measurements/`](measurements)에 있어 누구나 다시 계산할 수 있습니다.
+마비노기 클라이언트(D3D9, 2코어 4스레드 PC)의 서로 다른 던전 두 곳에서 적용 전후를 60초씩 번갈아 측정했습니다(PresentMon). 원자료와 분석 스크립트는 [`measurements/`](measurements)에 있어 누구나 다시 계산할 수 있습니다.
 
-### 측정 1: 10쌍, 약 115,500프레임
+### 측정 1: 던전 A, 10쌍, 약 115,500프레임
 
 ![쌍별 평균 FPS](docs/images/fps-pairs.png)
 
@@ -31,7 +35,7 @@
 - 1% low FPS와 p99 프레임타임은 보정 후 유의한 차이가 없었습니다.
 - 자세한 내용은 [성능 측정 보고서(PDF)](docs/performance-report-2026-11-18.pdf)에 있습니다.
 
-### 측정 2: 7쌍, 장면 부하 변동이 큰 구간
+### 측정 2: 던전 B, 7쌍, 장면 부하 변동이 큰 구간
 
 | 지표 | 적용 전 | 적용 후 | 변화 | 보정 후 유의 |
 |---|---|---|---|---|
