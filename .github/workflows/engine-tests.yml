@@ -24,6 +24,13 @@ jobs:
           msbuild native/GameOptimizer.Engine.vcxproj -m
           -p:Configuration=Release -p:Platform=x64
 
+      - name: Build launcher
+        shell: pwsh
+        run: >
+          msbuild launcher/GameOptimizer.Launcher.vcxproj -m
+          -p:Configuration=Release -p:Platform=x64
+          "-p:SolutionDir=$env:GITHUB_WORKSPACE/"
+
       - name: Build native tests
         shell: pwsh
         run: >
